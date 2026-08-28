@@ -1,0 +1,86 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AirPlay</title>
+<style>
+  html, body { margin: 0; background: transparent; color: #e8e8ee;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+  video { width: 1px; height: 1px; opacity: 0.01; position: absolute; }
+  #wrap { padding: 14px; }
+  button { display: block; width: 100%; padding: 10px; margin: 8px 0;
+    font: inherit; font-weight: 600; border-radius: 8px; border: none;
+    background: #2f6fed; color: white; cursor: pointer; }
+  button:disabled { background: #444; color: #999; }
+  #bar { height: 4px; background: #333; border-radius: 2px; margin: 10px 0; }
+  #fill { height: 100%; width: 0; background: #2f6fed; border-radius: 2px; }
+  #status { min-height: 2.6em; }
+  #err { color: #e8b84a; white-space: pre-wrap; font-size: 11px; }
+</style>
+
+<div id="wrap">
+  <p id="status">Preparing…</p>
+  <div id="bar"><div id="fill"></div></div>
+  <button id="pick" disabled>Send to TV</button>
+  <button id="stop">Stop casting</button>
+  <p id="err"></p>
+</div>
+<video id="v" autoplay playsinline x-webkit-airplay="allow"></video>
+
+<script>
+  var v = document.getElementById("v");
+  var pick = document.getElementById("pick");
+  var statusEl = document.getElementById("status");
+  var errEl = document.getElementById("err");
+  var fill = document.getElementById("fill");
+  var loadedURL = null;
+  var retried = false;      // known WebKit flake: first load may fail once
+  var airplayAvailable = false;
+  var onTV = false;
+
+  function render(s) {
+    fill.style.width = (s.pct || 0) + "%";
+    if (s.phase === "error") { statusEl.textContent = "Failed."; errEl.textContent = s.msg || ""; return; }
+    errEl.textContent = "";
+    if (onTV) { statusEl.textContent = "Playing on TV."; return; }
+    if (s.phase === "idle") statusEl.textContent = "Not casting.";
+    else if (s.phase === "starting") statusEl.textContent = "Packaging…";
+    else if (s.phase === "ready" || s.phase === "packaged") {
+      statusEl.textContent = airplayAvailable ? "Ready — click Send to TV."
+                                              : "Ready — waiting for AirPlay devices…";
+    }
+    if ((s.phase === "ready" || s.phase === "packaged") && s.url && s.url !== loadedURL) {
+      loadedURL = s.url;
+      retried = false;
+      v.src = s.url;
+      v.play().catch(function () {});
+    }
+  }
+
+  v.addEventListener("error", function () {
+    if (!retried && loadedURL) {           // retry exactly once (docs/prototype.md)
+      retried = true;
+      v.src = loadedURL;
+      v.play().catch(function () {});
+    } else {
+      errEl.textContent = "Stream failed to load (media error " +
+        (v.error ? v.error.code : "?") + ").";
+    }
+  });
+  v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {
+    airplayAvailable = ev.availability === "available";
+    pick.disabled = !airplayAvailable;
+  });
+  v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", function () {
+    onTV = !!v.webkitCurrentPlaybackTargetIsWireless;
+  });
+  pick.onclick = function () {
+    if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
+  };
+  document.getElementById("stop").onclick = function () {
+    v.pause(); v.removeAttribute("src"); v.load();
+    loadedURL = null; onTV = false;
+    iina.postMessage("stop", {});
+  };
+  iina.onMessage("state", render);
+  setInterval(function () { iina.postMessage("getState", {}); }, 500);
+  iina.postMessage("getState", {});
+</script>
