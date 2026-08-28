@@ -22,6 +22,10 @@ func main() {
 		fs := flag.NewFlagSet("stop", flag.ExitOnError)
 		out := fs.String("out", "", "output dir of the instance to stop")
 		fs.Parse(os.Args[2:])
+		if *out == "" {
+			fmt.Fprintln(os.Stderr, "missing required flag: -out")
+			os.Exit(2)
+		}
 		if err := TakeOver(filepath.Join(*out, "helper.pid")); err != nil {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
@@ -30,11 +34,6 @@ func main() {
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)
 	}
-}
-
-func fail(msg string) {
-	Emit(os.Stdout, "error", map[string]any{"msg": msg})
-	os.Exit(1)
 }
 
 func runServe(argv []string) {
@@ -53,6 +52,21 @@ func runServe(argv []string) {
 	fs.IntVar(&c.AMap, "amap", 1, "audio stream ff-index")
 	fs.Parse(argv)
 
+	// pidfile is set once -out is known to be non-empty (right after the
+	// flag-validation check below). fail removes it before exiting — a
+	// no-op, error ignored, if it's still empty (validation failed before
+	// -out was usable) or if it was never actually written (e.g.
+	// WritePidfile itself failed) — so every error exit leaves no stale
+	// pidfile behind, matching the WatchParent-triggered exit path below.
+	var pidfile string
+	fail := func(msg string) {
+		if pidfile != "" {
+			os.Remove(pidfile)
+		}
+		Emit(os.Stdout, "error", map[string]any{"msg": msg})
+		os.Exit(1)
+	}
+
 	if c.Source == "" || c.OutDir == "" || c.FFmpeg == "" || parent == 0 {
 		fail("missing required flags: -source, -out, -ffmpeg, -parent")
 	}
@@ -62,7 +76,7 @@ func runServe(argv []string) {
 	if err := os.MkdirAll(c.OutDir, 0o755); err != nil {
 		fail(err.Error())
 	}
-	pidfile := filepath.Join(c.OutDir, "helper.pid")
+	pidfile = filepath.Join(c.OutDir, "helper.pid")
 	if err := TakeOver(pidfile); err != nil {
 		fail("stale instance: " + err.Error())
 	}
@@ -113,6 +127,7 @@ func runServe(argv []string) {
 						"url": fmt.Sprintf("http://%s:%d/index.m3u8", ip, port),
 					})
 					ready = true
+					readyTick.Stop()
 				} else if time.Now().After(readyDeadline) {
 					stopJob()
 					fail("packaging produced no playlist within 120s")
@@ -129,6 +144,7 @@ func runServe(argv []string) {
 						"url": fmt.Sprintf("http://%s:%d/index.m3u8", ip, port),
 					})
 					ready = true
+					readyTick.Stop()
 				} else {
 					fail("ffmpeg finished but produced no playlist")
 				}
