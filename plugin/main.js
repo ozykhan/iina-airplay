@@ -43,8 +43,30 @@ function parseHelperEvents(buffer, chunk) {
   return { events: events, rest: rest };
 }
 
+// utils.resolvePath("@data/") resolves to an absolute path of the form
+// <...>/plugins-data/<identifier>. The sibling plugins directory (where the
+// plugin bundle — and thus bin/ — actually lives) replaces that trailing
+// "plugins-data/<identifier>" with "plugins". Returns null if the path
+// doesn't have the expected shape.
+function pluginsDirFromDataDir(dataPath) {
+  if (!dataPath) return null;
+  var normalized = dataPath.replace(/\/+$/, ""); // strip trailing slash(es)
+  var idx = normalized.lastIndexOf("/plugins-data/");
+  if (idx === -1) return null;
+  return normalized.slice(0, idx) + "/plugins";
+}
+
+function isValidPid(pid) {
+  return typeof pid === "number" && isFinite(pid) && pid > 0;
+}
+
 if (typeof module !== "undefined") {
-  module.exports = { selectTracks: selectTracks, parseHelperEvents: parseHelperEvents };
+  module.exports = {
+    selectTracks: selectTracks,
+    parseHelperEvents: parseHelperEvents,
+    pluginsDirFromDataDir: pluginsDirFromDataDir,
+    isValidPid: isValidPid,
+  };
 }
 
 // ---- IINA runtime ----
@@ -56,30 +78,51 @@ if (typeof iina !== "undefined") {
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
 
+  // Bumped every time a new cast starts or the cast is stopped. Async
+  // callbacks (bin-dir resolution, helper stdout, exec .then/.catch) capture
+  // the generation they belong to and no-op if it no longer matches — this
+  // stops a superseded cast's stale callbacks from clobbering the state of
+  // whatever cast (or idle state) came after it.
+  var castGen = 0;
+
   // Resolve our own install dir: @data is <plugins-data>/<identifier>; the
   // plugin itself lives in <.../plugins>/<something>. Locate bin/ relative to
-  // the data dir's sibling plugins folder at runtime via a glob through /bin/sh
-  // once, then cache it in @data so later launches skip the lookup.
+  // the data dir's sibling plugins folder at runtime via a glob through
+  // /bin/sh once, then cache it in @data so later launches skip the lookup.
+  // utils.exec wipes the environment (only LC_ALL survives — no HOME), so the
+  // plugins dir is derived in JS via utils.resolvePath and passed to the
+  // shell as an argument rather than relied on via $HOME.
   function resolveBinDir(cb) {
     var cached = null;
     try { cached = file.read("@data/bindir.txt"); } catch (e) {}
-    if (cached && cached.trim()) { cb(cached.trim()); return; }
+    if (cached && cached.trim()) { cb(cached.trim(), null); return; }
+    var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data"));
+    if (!pluginsDir) { cb(null, "cannot resolve plugins directory"); return; }
     var script =
-      'for d in "$HOME/Library/Application Support/com.colliderli.iina/plugins/"*/; do' +
-      '  if grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
+      'for d in "$1"/*/; do' +
+      '  if /usr/bin/grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
       '    printf %s "$d"bin; exit 0; fi; done; exit 1';
-    utils.exec("/bin/sh", ["-c", script]).then(function (r) {
+    utils.exec("/bin/sh", ["-c", script, "sh", pluginsDir]).then(function (r) {
       if (r.status === 0 && r.stdout) {
         file.write("@data/bindir.txt", r.stdout);
-        cb(r.stdout);
+        cb(r.stdout, null);
       } else {
-        state = { phase: "error", url: null, pct: 0, msg: "cannot locate plugin bin directory" };
+        cb(null, "cannot locate plugin bin directory");
       }
+    }).catch(function (e) {
+      cb(null, "cannot locate plugin bin directory: " + String(e));
     });
   }
 
+  // Drop the cached bin dir so the next resolveBinDir call re-derives it
+  // instead of reusing a directory that just failed to produce a runnable
+  // helper (e.g. the plugin was reinstalled to a new path).
+  function invalidateBinDirCache() {
+    try { file.write("@data/bindir.txt", ""); } catch (e) {}
+  }
+
   function startCast() {
-    if (state.phase === "starting" || state.phase === "ready") return;
+    if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
     var src = mpv.getString("path");
     if (!src || src.charAt(0) !== "/") {
       core.osd("AirPlay: only local files can be cast");
@@ -90,24 +133,38 @@ if (typeof iina !== "undefined") {
       core.osd("AirPlay: no castable video/audio tracks");
       return;
     }
+    var pid = getIINAPid();
+    if (!isValidPid(pid)) {
+      core.osd("AirPlay: cannot determine IINA process id");
+      state = { phase: "error", url: null, pct: 0, msg: "cannot determine IINA process id" };
+      return;
+    }
     var duration = mpv.getNumber("duration") || 0;
     var outDir = utils.resolvePath("@tmp/hls");
+    var gen = ++castGen;
+    stdoutRest = "";
     state = { phase: "starting", url: null, pct: 0, msg: null };
     core.pause();
 
-    resolveBinDir(function (binDir) {
+    resolveBinDir(function (binDir, resolveErr) {
+      if (gen !== castGen) return; // superseded by a newer cast or a stop
+      if (resolveErr) {
+        state = { phase: "error", url: null, pct: 0, msg: resolveErr };
+        return;
+      }
       var helper = binDir + "/airplay-helper";
       var ffmpeg = binDir + "/ffmpeg";
       utils.exec(helper, [
         "serve",
         "-source", src, "-out", outDir,
         "-ffmpeg", ffmpeg,
-        "-parent", String(getIINAPid()),
+        "-parent", String(pid),
         "-duration", String(duration),
         "-vcodec", tracks.vcodec, "-acodec", tracks.acodec,
         "-achannels", String(tracks.achannels),
         "-vmap", String(tracks.vmap), "-amap", String(tracks.amap),
       ], undefined, function (chunk) {
+        if (gen !== castGen) return;
         var parsed = parseHelperEvents(stdoutRest, chunk);
         stdoutRest = parsed.rest;
         for (var i = 0; i < parsed.events.length; i++) {
@@ -116,12 +173,16 @@ if (typeof iina !== "undefined") {
           else if (ev.event === "progress") { state.pct = ev.pct; }
           else if (ev.event === "packaged") { state.phase = state.phase === "ready" ? "packaged" : state.phase; state.pct = 100; }
           else if (ev.event === "error") { state = { phase: "error", url: null, pct: 0, msg: ev.msg }; }
+          else if (ev.event === "stopped") { state = { phase: "idle", url: null, pct: 0, msg: null }; }
         }
       }, function (errChunk) {
         console.log("[helper:stderr] " + errChunk.trim());
       }).then(function () {
+        if (gen !== castGen) return;
         if (state.phase !== "error") state = { phase: "idle", url: null, pct: 0, msg: null };
       }).catch(function (e) {
+        invalidateBinDirCache(); // helper failed to start; don't trust the cached dir next time
+        if (gen !== castGen) return;
         state = { phase: "error", url: null, pct: 0, msg: String(e) };
       });
     });
@@ -134,7 +195,9 @@ if (typeof iina !== "undefined") {
   }
 
   function stopCast() {
-    resolveBinDir(function (binDir) {
+    castGen++; // invalidate any in-flight cast's callbacks
+    resolveBinDir(function (binDir, resolveErr) {
+      if (resolveErr) { console.log("[stopCast] " + resolveErr); return; }
       utils.exec(binDir + "/airplay-helper", ["stop", "-out", utils.resolvePath("@tmp/hls")]);
     });
     state = { phase: "idle", url: null, pct: 0, msg: null };

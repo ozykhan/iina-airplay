@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, parseHelperEvents } = require("../main.js");
+const { selectTracks, parseHelperEvents, pluginsDirFromDataDir, isValidPid } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -49,4 +49,36 @@ test("parseHelperEvents skips non-JSON noise lines", () => {
   const r = parseHelperEvents("", "some stray warning\n{\"event\":\"packaged\"}\n");
   assert.equal(r.events.length, 1);
   assert.equal(r.events[0].event, "packaged");
+});
+
+test("pluginsDirFromDataDir derives the sibling plugins dir", () => {
+  const dataDir = "/Users/x/Library/Application Support/com.colliderli.iina/plugins-data/dev.faruk.iina-airplay";
+  assert.equal(
+    pluginsDirFromDataDir(dataDir),
+    "/Users/x/Library/Application Support/com.colliderli.iina/plugins"
+  );
+});
+
+test("pluginsDirFromDataDir handles a trailing slash", () => {
+  const dataDir = "/Users/x/Library/Application Support/com.colliderli.iina/plugins-data/dev.faruk.iina-airplay/";
+  assert.equal(
+    pluginsDirFromDataDir(dataDir),
+    "/Users/x/Library/Application Support/com.colliderli.iina/plugins"
+  );
+});
+
+test("pluginsDirFromDataDir returns null for an unexpected shape", () => {
+  assert.equal(pluginsDirFromDataDir("/Users/x/somewhere/else"), null);
+  assert.equal(pluginsDirFromDataDir(""), null);
+  assert.equal(pluginsDirFromDataDir(null), null);
+});
+
+test("isValidPid accepts positive finite numbers only", () => {
+  assert.equal(isValidPid(1234), true);
+  assert.equal(isValidPid(0), false);
+  assert.equal(isValidPid(-1), false);
+  assert.equal(isValidPid(NaN), false);
+  assert.equal(isValidPid(undefined), false);
+  assert.equal(isValidPid(null), false);
+  assert.equal(isValidPid("1234"), false);
 });
