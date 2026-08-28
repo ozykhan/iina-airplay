@@ -32,5 +32,12 @@ func TakeOver(path string) error {
 			time.Sleep(100 * time.Millisecond)
 		}
 	}
-	return os.Remove(path)
+	// The process we just SIGTERM'd may have removed the pidfile itself as
+	// part of its own graceful shutdown (main.go's serve loop does exactly
+	// this). That race is a success, not a failure: the goal is "no stale
+	// pidfile survives", and by this point none does.
+	if err := os.Remove(path); err != nil && !os.IsNotExist(err) {
+		return err
+	}
+	return nil
 }
