@@ -6,11 +6,11 @@ import (
 )
 
 func mustCIDR(t *testing.T, s string) net.Addr {
-	ip, _, err := net.ParseCIDR(s)
+	ip, n, err := net.ParseCIDR(s)
 	if err != nil {
 		t.Fatal(err)
 	}
-	return &net.IPAddr{IP: ip}
+	return &net.IPNet{IP: ip, Mask: n.Mask}
 }
 
 func TestPickIPv4(t *testing.T) {
