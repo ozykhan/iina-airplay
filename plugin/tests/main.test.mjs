@@ -51,8 +51,8 @@ test("parseHelperEvents skips non-JSON noise lines", () => {
   assert.equal(r.events[0].event, "packaged");
 });
 
-test("pluginsDirFromDataDir derives the sibling plugins dir", () => {
-  const dataDir = "/Users/x/Library/Application Support/com.colliderli.iina/plugins-data/dev.faruk.iina-airplay";
+test("pluginsDirFromDataDir derives the parent of the .data component", () => {
+  const dataDir = "/Users/x/Library/Application Support/com.colliderli.iina/plugins/.data/dev.faruk.iina-airplay";
   assert.equal(
     pluginsDirFromDataDir(dataDir),
     "/Users/x/Library/Application Support/com.colliderli.iina/plugins"
@@ -60,7 +60,7 @@ test("pluginsDirFromDataDir derives the sibling plugins dir", () => {
 });
 
 test("pluginsDirFromDataDir handles a trailing slash", () => {
-  const dataDir = "/Users/x/Library/Application Support/com.colliderli.iina/plugins-data/dev.faruk.iina-airplay/";
+  const dataDir = "/Users/x/Library/Application Support/com.colliderli.iina/plugins/.data/dev.faruk.iina-airplay/";
   assert.equal(
     pluginsDirFromDataDir(dataDir),
     "/Users/x/Library/Application Support/com.colliderli.iina/plugins"

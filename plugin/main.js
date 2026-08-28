@@ -44,16 +44,17 @@ function parseHelperEvents(buffer, chunk) {
 }
 
 // utils.resolvePath("@data/") resolves to an absolute path of the form
-// <...>/plugins-data/<identifier>. The sibling plugins directory (where the
-// plugin bundle — and thus bin/ — actually lives) replaces that trailing
-// "plugins-data/<identifier>" with "plugins". Returns null if the path
-// doesn't have the expected shape.
+// <...>/plugins/.data/<identifier> (verified on-disk against a running IINA
+// 1.4.4 install — there is no "plugins-data" directory). The plugins
+// directory (where the plugin bundle — and thus bin/ — actually lives) is
+// the parent of the ".data" component. Returns null if the path doesn't
+// have the expected shape.
 function pluginsDirFromDataDir(dataPath) {
   if (!dataPath) return null;
   var normalized = dataPath.replace(/\/+$/, ""); // strip trailing slash(es)
-  var idx = normalized.lastIndexOf("/plugins-data/");
+  var idx = normalized.lastIndexOf("/.data/");
   if (idx === -1) return null;
-  return normalized.slice(0, idx) + "/plugins";
+  return normalized.slice(0, idx);
 }
 
 function isValidPid(pid) {
@@ -96,7 +97,7 @@ if (typeof iina !== "undefined") {
     var cached = null;
     try { cached = file.read("@data/bindir.txt"); } catch (e) {}
     if (cached && cached.trim()) { cb(cached.trim(), null); return; }
-    var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data"));
+    var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data/"));
     if (!pluginsDir) { cb(null, "cannot resolve plugins directory"); return; }
     var script =
       'for d in "$1"/*/; do' +
