@@ -86,10 +86,11 @@ if (typeof iina !== "undefined") {
   // whatever cast (or idle state) came after it.
   var castGen = 0;
 
-  // Resolve our own install dir: @data is <plugins-data>/<identifier>; the
-  // plugin itself lives in <.../plugins>/<something>. Locate bin/ relative to
-  // the data dir's sibling plugins folder at runtime via a glob through
-  // /bin/sh once, then cache it in @data so later launches skip the lookup.
+  // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
+  // plugin itself lives directly under that <.../plugins> directory. Locate
+  // bin/ relative to the data dir's parent plugins folder at runtime via a
+  // glob through /bin/sh once, then cache it in @data so later launches skip
+  // the lookup.
   // utils.exec wipes the environment (only LC_ALL survives — no HOME), so the
   // plugins dir is derived in JS via utils.resolvePath and passed to the
   // shell as an argument rather than relied on via $HOME.
