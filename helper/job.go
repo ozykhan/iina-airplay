@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bufio"
+	"fmt"
+	"io"
+	"os/exec"
 	"path/filepath"
 	"strconv"
 	"strings"
+	"syscall"
 )
 
 type JobConfig struct {
@@ -76,4 +81,55 @@ func ProgressPct(outTimeUS int64, duration float64) float64 {
 		return 0
 	}
 	return pct
+}
+
+func RunJob(c JobConfig, out io.Writer) (func(), <-chan error) {
+	done := make(chan error, 1)
+	cmd := exec.Command(c.FFmpeg, BuildArgs(c)...)
+	cmd.SysProcAttr = &syscall.SysProcAttr{
+		Setpgid: true,
+	}
+	var stderr strings.Builder
+	cmd.Stderr = &stderr
+	stdout, err := cmd.StdoutPipe()
+	if err == nil {
+		err = cmd.Start()
+	}
+	if err != nil {
+		done <- err
+		return func() {}, done
+	}
+	go func() {
+		sc := bufio.NewScanner(stdout)
+		for sc.Scan() {
+			k, v, ok := ParseProgressValue(sc.Text())
+			if !ok {
+				continue
+			}
+			switch k {
+			case "out_time_us":
+				if us, perr := strconv.ParseInt(v, 10, 64); perr == nil {
+					Emit(out, "progress", map[string]any{"pct": ProgressPct(us, c.Duration)})
+				}
+			case "progress":
+				if v == "end" {
+					Emit(out, "packaged", nil)
+				}
+			}
+		}
+		// Handle any scanner error, then wait for process
+		werr := cmd.Wait()
+		if werr != nil {
+			werr = fmt.Errorf("ffmpeg: %w; stderr: %s", werr, strings.TrimSpace(stderr.String()))
+		}
+		done <- werr
+	}()
+	stop := func() {
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+		// Close stdout to help the scanner exit if it's still reading
+		if c, ok := stdout.(io.Closer); ok {
+			c.Close()
+		}
+	}
+	return stop, done
 }

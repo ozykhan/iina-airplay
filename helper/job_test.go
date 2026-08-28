@@ -1,9 +1,14 @@
 package main
 
 import (
+	"bytes"
+	"encoding/json"
+	"os"
+	"path/filepath"
 	"slices"
 	"strings"
 	"testing"
+	"time"
 )
 
 func baseCfg() JobConfig {
@@ -79,5 +84,82 @@ func TestProgressPct(t *testing.T) {
 	}
 	if got := ProgressPct(5, 0); got != 0 {
 		t.Fatalf("zero duration must yield 0, got %f", got)
+	}
+}
+
+func writeStubFFmpeg(t *testing.T, script string) string {
+	t.Helper()
+	p := filepath.Join(t.TempDir(), "ffmpeg")
+	os.WriteFile(p, []byte("#!/bin/sh\n"+script), 0o755)
+	return p
+}
+
+func collectEvents(t *testing.T, buf *bytes.Buffer) []map[string]any {
+	t.Helper()
+	var evs []map[string]any
+	for _, line := range strings.Split(strings.TrimSpace(buf.String()), "\n") {
+		if line == "" {
+			continue
+		}
+		var m map[string]any
+		if err := json.Unmarshal([]byte(line), &m); err != nil {
+			t.Fatalf("bad event line %q: %v", line, err)
+		}
+		evs = append(evs, m)
+	}
+	return evs
+}
+
+func TestRunJobEmitsProgressAndPackaged(t *testing.T) {
+	stub := writeStubFFmpeg(t,
+		`echo "out_time_us=2700000000"; echo "progress=continue"; echo "out_time_us=5400000000"; echo "progress=end"`)
+	c := baseCfg()
+	c.FFmpeg = stub
+	var buf bytes.Buffer
+	_, done := RunJob(c, &buf)
+	if err := <-done; err != nil {
+		t.Fatal(err)
+	}
+	evs := collectEvents(t, &buf)
+	var sawHalf, sawPackaged bool
+	for _, e := range evs {
+		if e["event"] == "progress" {
+			if pct, _ := e["pct"].(float64); pct > 49 && pct < 51 {
+				sawHalf = true
+			}
+		}
+		if e["event"] == "packaged" {
+			sawPackaged = true
+		}
+	}
+	if !sawHalf || !sawPackaged {
+		t.Fatalf("missing events; got %v", evs)
+	}
+}
+
+func TestRunJobFailureCarriesStderr(t *testing.T) {
+	stub := writeStubFFmpeg(t, `echo "Unknown encoder 'nope'" >&2; exit 1`)
+	c := baseCfg()
+	c.FFmpeg = stub
+	var buf bytes.Buffer
+	_, done := RunJob(c, &buf)
+	err := <-done
+	if err == nil || !strings.Contains(err.Error(), "Unknown encoder") {
+		t.Fatalf("want stderr in error, got %v", err)
+	}
+}
+
+func TestRunJobStop(t *testing.T) {
+	stub := writeStubFFmpeg(t, `trap 'exit 0' TERM; sleep 30`)
+	c := baseCfg()
+	c.FFmpeg = stub
+	var buf bytes.Buffer
+	stop, done := RunJob(c, &buf)
+	time.Sleep(200 * time.Millisecond)
+	stop()
+	select {
+	case <-done:
+	case <-time.After(3 * time.Second):
+		t.Fatal("stop() did not terminate ffmpeg")
 	}
 }
