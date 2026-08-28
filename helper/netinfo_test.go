@@ -18,8 +18,8 @@ func TestPickIPv4(t *testing.T) {
 		addrs []net.Addr
 		want  string
 	}{
-		{[]net.Addr{mustCIDR(t, "127.0.0.1/8")}, ""},                                  // loopback rejected
-		{[]net.Addr{mustCIDR(t, "169.254.10.1/16")}, ""},                              // link-local rejected
+		{[]net.Addr{mustCIDR(t, "127.0.0.1/8")}, ""},                                            // loopback rejected
+		{[]net.Addr{mustCIDR(t, "169.254.10.1/16")}, ""},                                        // link-local rejected
 		{[]net.Addr{mustCIDR(t, "fe80::1/64"), mustCIDR(t, "192.168.1.18/24")}, "192.168.1.18"}, // v6 skipped
 		{[]net.Addr{mustCIDR(t, "10.0.0.7/8")}, "10.0.0.7"},
 	}

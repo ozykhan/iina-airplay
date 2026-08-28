@@ -3,3 +3,6 @@ node_modules/
 dist/
 *.zip
 /tmp-hls/
+plugin/bin/
+build/
+helper/helper
