@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"strconv"
 	"strings"
+	"sync/atomic"
 	"syscall"
 )
 
@@ -99,6 +100,10 @@ func RunJob(c JobConfig, out io.Writer) (func(), <-chan error) {
 		done <- err
 		return func() {}, done
 	}
+
+	// Flag to track when job has completed (0 = running, 1 = done)
+	var jobDone atomic.Int32
+
 	go func() {
 		sc := bufio.NewScanner(stdout)
 		for sc.Scan() {
@@ -122,13 +127,19 @@ func RunJob(c JobConfig, out io.Writer) (func(), <-chan error) {
 		if werr != nil {
 			werr = fmt.Errorf("ffmpeg: %w; stderr: %s", werr, strings.TrimSpace(stderr.String()))
 		}
+		// Mark job as done before sending to channel
+		jobDone.Store(1)
 		done <- werr
 	}()
+
 	stop := func() {
-		syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
-		// Close stdout to help the scanner exit if it's still reading
-		if c, ok := stdout.(io.Closer); ok {
-			c.Close()
+		// Only signal if job is still running
+		if jobDone.Load() == 0 {
+			syscall.Kill(-cmd.Process.Pid, syscall.SIGTERM)
+			// Close stdout to help the scanner exit if it's still reading
+			if c, ok := stdout.(io.Closer); ok {
+				c.Close()
+			}
 		}
 	}
 	return stop, done

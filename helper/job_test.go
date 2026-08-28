@@ -163,3 +163,18 @@ func TestRunJobStop(t *testing.T) {
 		t.Fatal("stop() did not terminate ffmpeg")
 	}
 }
+
+func TestRunJobStopAfterDone(t *testing.T) {
+	stub := writeStubFFmpeg(t, `exit 0`)
+	c := baseCfg()
+	c.FFmpeg = stub
+	var buf bytes.Buffer
+	stop, done := RunJob(c, &buf)
+	// Wait for job to complete
+	if err := <-done; err != nil {
+		t.Fatalf("job failed: %v", err)
+	}
+	// Call stop() after job is done - should not panic or signal recycled PID
+	stop()
+	stop() // Call twice for good measure
+}
