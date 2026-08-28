@@ -49,17 +49,28 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   ALAC, FLAC. Not MKV, not DTS/DTS-HD, not TrueHD, not PGS subtitles.
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
 
-## The open question that gates the design
+## The design is settled — all prototype tests passed (2026-08-29, user-confirmed)
 
-Does WebKit's AirPlay picker appear in the plugin's own `standaloneWindow`?
+WebKit's AirPlay picker works in the plugin's `standaloneWindow` **and** in the
+plugin's sidebar webview, and the packaged stream played on the user's TV both
+ways. So the real plugin is **JS + ffmpeg + a small HTTP server, no native code,
+and no extra window**: the cast UI lives in a sidebar tab (Info.json
+`"sidebarTab"`) with a hidden 1×1 px `<video>` and a button calling
+`webkitShowPlaybackTargetPicker()` — the picker requires a user gesture inside
+web content, so a native menu item cannot summon it directly.
 
-- **Yes** → the plugin is JS + ffmpeg + a small HTTP server. No native code at all.
-- **No** → a Swift helper is needed: `AVPlayer` with `allowsExternalPlayback = true`
-  (macOS 10.11+) and `AVRoutePickerView` (macOS 10.15+), spawned via `utils.exec`.
+Hard-won constraints from the prototype runs (details in `docs/prototype.md`):
 
-`prototype/` answers this in about ten minutes. See `docs/prototype.md`. It needs a
-human to look at the window and click the button — do not claim it passed without
-the user confirming.
+- **`sidebar.show()` SIGABRTs IINA when called from a `utils.exec` callback**
+  (AutoLayout thread assertion; exec callbacks run off-main). `standaloneWindow.*`
+  is safe from anywhere. Only call `sidebar.*` from menu/onMessage callbacks; let
+  the page poll for background results.
+- **The spawned helper outlives IINA** (quit *and* crash). The real plugin needs
+  explicit helper kill and stale-port detection on start.
+- **First media load flakes** (`error code=4`, then plays on reload) in both
+  webviews. Retry once automatically.
+- `fetch()` from the plugin page cannot reach the stream (CORS, `file://` origin);
+  `<video>` loads are exempt.
 
 ## Dev loop
 

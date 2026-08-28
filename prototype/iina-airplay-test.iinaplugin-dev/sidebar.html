@@ -1,0 +1,93 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AirPlay Sidebar Test</title>
+<style>
+  html, body { margin: 0; background: transparent; color: #e8e8ee;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+  video { width: 1px; height: 1px; opacity: 0.01; position: absolute; }
+  #wrap { padding: 14px; }
+  button { display: block; width: 100%; padding: 10px; margin: 8px 0;
+    font: inherit; font-weight: 600; border-radius: 8px; border: none;
+    background: #2f6fed; color: white; cursor: pointer; }
+  button:disabled { background: #444; color: #999; }
+  #state { color: #8f8; }
+  #diag { color: #e8b84a; white-space: pre-wrap; font-size: 11px; }
+</style>
+
+<div id="wrap">
+  <p><b>Sidebar AirPlay test — source matrix</b></p>
+  <p id="state">Waiting for the stream…</p>
+  <button id="pick" disabled>Send to TV (AirPlay picker)</button>
+  <p id="diag"></p>
+</div>
+<video id="v" autoplay playsinline x-webkit-airplay="allow"></video>
+
+<script>
+  var got = false, idx = 0, sources = [];
+  var v = document.getElementById("v");
+  var pick = document.getElementById("pick");
+  var state = document.getElementById("state");
+  var diag = document.getElementById("diag");
+
+  function note(s) { diag.textContent += s + "\n"; }
+
+  function tryNext() {
+    if (idx >= sources.length) { state.textContent = "ALL SOURCES FAILED"; return; }
+    var s = sources[idx];
+    note("try [" + s.label + "]");
+    v.src = s.url;
+    v.play().then(function(){},
+                  function(e){ note("  play() rejected: " + e.name); });
+  }
+
+  v.addEventListener("error", function () {
+    var e = v.error;
+    note("  error code=" + (e ? e.code : "?") +
+         (e && e.message ? " msg=" + e.message : ""));
+    idx++; tryNext();
+  });
+  v.addEventListener("playing", function () {
+    state.textContent = "PLAYING [" + sources[idx].label + "] — click the button";
+    note("  PLAYING [" + sources[idx].label + "]");
+  });
+  v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {
+    note("airplay availability: " + ev.availability);
+    pick.disabled = ev.availability !== "available";
+  });
+  v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", function () {
+    var on = v.webkitCurrentPlaybackTargetIsWireless;
+    state.textContent = on ? "PLAYING ON TV — sidebar test PASSED"
+                           : "Back to local playback.";
+    note("wireless target active: " + on);
+  });
+  pick.onclick = function () {
+    if (typeof v.webkitShowPlaybackTargetPicker === "function") {
+      v.webkitShowPlaybackTargetPicker();
+    } else {
+      note("webkitShowPlaybackTargetPicker MISSING");
+    }
+  };
+
+  iina.onMessage("url", function (d) {
+    if (got) return;
+    got = true;
+    var lan = d.url;                                    // http://<lan-ip>:8919/
+    var loop = lan.replace(/\/\/[^:]+:/, "//127.0.0.1:");
+    sources = [
+      { label: "HLS  LAN ", url: lan  + "index.m3u8" },
+      { label: "HLS  loop", url: loop + "index.m3u8" },
+      { label: "MP4  LAN ", url: lan  + "test.mp4"   },
+      { label: "MP4  loop", url: loop + "test.mp4"   },
+    ];
+    fetch(lan + "index.m3u8").then(
+      function (r) { note("fetch m3u8 (LAN): HTTP " + r.status); tryNext(); },
+      function (e) { note("fetch m3u8 (LAN) FAILED: " + e.message); tryNext(); });
+  });
+
+  var tries = 0;
+  var timer = setInterval(function () {
+    if (got || tries++ > 240) { clearInterval(timer); return; }
+    iina.postMessage("ready", {});
+  }, 250);
+  iina.postMessage("ready", {});
+</script>

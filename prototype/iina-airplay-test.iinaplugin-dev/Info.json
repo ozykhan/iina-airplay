@@ -2,9 +2,20 @@
   "name": "AirPlay Test",
   "identifier": "dev.faruk.iina-airplay-test",
   "version": "0.1.0",
-  "author": { "name": "Faruk" },
+  "author": {
+    "name": "Faruk"
+  },
   "description": "Prototype: package the playing file as AirPlay-compatible HLS and try to reach an Apple TV through the plugin's own WKWebView.",
   "entry": "main.js",
-  "permissions": ["file-system", "network-request", "show-osd"],
-  "allowedDomains": ["*"]
+  "permissions": [
+    "file-system",
+    "network-request",
+    "show-osd"
+  ],
+  "allowedDomains": [
+    "*"
+  ],
+  "sidebarTab": {
+    "name": "AirPlay"
+  }
 }

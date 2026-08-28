@@ -9,7 +9,7 @@
 //
 // If 3 holds, the real plugin needs no native AirPlay UI at all.
 
-const { core, mpv, menu, standaloneWindow, utils, file, console } = iina;
+const { core, mpv, menu, standaloneWindow, sidebar, utils, file, console } = iina;
 
 const PORT = 8919;
 const CLIP_SECONDS = "180";   // "0" for the whole file
@@ -33,10 +33,22 @@ function showWindow(url) {
   standaloneWindow.open();
 }
 
-function cast() {
+// IINA's sidebar.show() runs AppKit layout on the *calling* thread and
+// SIGABRTs (AutoLayout thread assertion) when invoked from a utils.exec
+// callback, which runs off-main. Only call sidebar.* from menu callbacks;
+// the page polls "ready" until streamURL exists.
+function openSidebar() {
+  sidebar.loadFile("sidebar.html");                // clears message listeners
+  sidebar.onMessage("ready", () => {
+    if (streamURL) sidebar.postMessage("url", { url: streamURL });
+  });
+  sidebar.show();
+}
+
+function cast(show) {
   if (serverRunning) {
     core.osd("Already streaming - quit IINA to stop the helper");
-    if (streamURL) showWindow(streamURL);
+    if (streamURL) show(streamURL);
     return;
   }
 
@@ -69,7 +81,7 @@ function cast() {
       if (m && !opened) {
         opened = true;
         core.osd("Ready - look for the AirPlay button");
-        showWindow(m[1]);
+        show(m[1]);
       }
     },
     (err) => console.log("[serve:stderr] " + err.trim())
@@ -85,4 +97,8 @@ function cast() {
     });
 }
 
-menu.addItem(menu.item("Cast current file to Apple TV (test)", cast));
+menu.addItem(menu.item("Cast current file to Apple TV (test)", () => cast(showWindow)));
+menu.addItem(menu.item("Cast via sidebar (test)", () => {
+  openSidebar();                          // main-thread menu callback: safe
+  cast((url) => { streamURL = url; });    // READY handler only records the URL
+}));
