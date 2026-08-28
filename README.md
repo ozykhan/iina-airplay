@@ -42,7 +42,8 @@ make test       # go test ./... in helper/, plus node --test over plugin/tests/
 
 - `docs/feasibility.md` — why the direct route is closed, what's possible instead,
   and the codec/subtitle handling matrix
-- `docs/prototype.md` — the two throwaway experiments that de-risked the design
-  (picker-in-plugin-window, picker-in-sidebar)
+- `docs/prototype.md` — the three throwaway experiments that de-risked the design
+  (Apple TV accepts the packaged stream, picker-in-plugin-window,
+  picker-in-sidebar)
 - `docs/distribution.md` — the packaging and install design for strangers'
   machines (not built yet)
