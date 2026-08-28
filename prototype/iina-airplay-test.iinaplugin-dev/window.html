@@ -1,0 +1,35 @@
+<!doctype html>
+<meta charset="utf-8">
+<title>AirPlay Test</title>
+<style>
+  html, body { margin: 0; background: #101014; color: #e8e8ee;
+    font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+  video { display: block; width: 100%; height: 76vh; background: #000; }
+  #hint { padding: 12px 16px; margin: 0; color: #a9a9b8; }
+  #hint b { color: #e8e8ee; }
+</style>
+
+<video id="v" controls autoplay playsinline x-webkit-airplay="allow"></video>
+<p id="hint">Waiting for the stream…</p>
+
+<script>
+  var got = false;
+
+  iina.onMessage("url", function (d) {
+    if (got) return;
+    got = true;
+    document.getElementById("v").src = d.url + "index.m3u8";
+    document.getElementById("hint").innerHTML =
+      "<b>If an AirPlay button appears in the controls above, the whole design works.</b><br>" +
+      "Serving from " + d.url;
+  });
+
+  // The plugin side registers its listener after loadFile(), so the first
+  // "ready" can arrive too early. Keep asking until the URL comes back.
+  var tries = 0;
+  var timer = setInterval(function () {
+    if (got || tries++ > 40) { clearInterval(timer); return; }
+    iina.postMessage("ready", {});
+  }, 250);
+  iina.postMessage("ready", {});
+</script>
