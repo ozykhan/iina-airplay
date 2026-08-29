@@ -117,8 +117,9 @@ func runServe(argv []string) {
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 
 	// The TV can start pulling as soon as the advertised playlist exists.
-	// With subs that's ffmpeg's master playlist — but the variant playlist
-	// it points at must exist too before the URL is usable.
+	// With subs that's ffmpeg's master playlist — but the variant playlists
+	// it points at (media + subtitle rendition) must exist too before the
+	// URL is usable.
 	playlistName := c.PlaylistName()
 	readyURL := fmt.Sprintf("http://%s:%d/%s", ip, port, playlistName)
 	playlistReady := func() bool {
@@ -127,6 +128,11 @@ func runServe(argv []string) {
 		}
 		if c.HasSub() {
 			if _, err := os.Stat(filepath.Join(c.OutDir, "index.m3u8")); err != nil {
+				return false
+			}
+			// master.m3u8's subtitle rendition URI= points at this file; the
+			// TV will 404 on it if the master is advertised before it exists.
+			if _, err := os.Stat(filepath.Join(c.OutDir, "index_vtt.m3u8")); err != nil {
 				return false
 			}
 		}

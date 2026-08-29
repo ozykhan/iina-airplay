@@ -112,7 +112,12 @@ func TestServeWithSubsAdvertisesRewrittenMaster(t *testing.T) {
 	bin := buildHelper(t)
 	out := t.TempDir()
 	// Stub ffmpeg writes what hlsenc would for one variant + a subtitle
-	// rendition, then idles like a long transcode.
+	// rendition, then idles like a long transcode. All three files
+	// (index.m3u8, index_vtt.m3u8, master.m3u8) are required before the
+	// helper's ready gate fires — leaving any one out here would make
+	// waitReady below time out (verified by hand: dropping the
+	// index_vtt.m3u8 line makes this test fail with "no ready event in
+	// time" instead of passing).
 	stub := filepath.Join(t.TempDir(), "ffmpeg")
 	master := `#EXTM3U\n#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="default",NAME="subtitle_0",DEFAULT=NO,AUTOSELECT=YES,URI="index_vtt.m3u8"\nindex.m3u8`
 	os.WriteFile(stub, []byte(fmt.Sprintf(

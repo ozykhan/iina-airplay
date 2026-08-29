@@ -3,10 +3,12 @@ package main
 import "strings"
 
 // RewriteMasterPlaylist fixes up the subtitle rendition line of an
-// ffmpeg-written HLS master playlist. ffmpeg hardcodes DEFAULT=NO and a
-// generic NAME, which leaves subtitles off until the viewer digs through the
-// TV's menu; the caller knows the track's real name and language, so the
-// server rewrites the line at serve time.
+// ffmpeg-written HLS master playlist. Older ffmpeg hardcodes DEFAULT=NO on
+// the subtitle rendition; every version emits a generic NAME and no
+// LANGUAGE, which leaves subtitles unlabeled (and, on older ffmpeg, off
+// until the viewer digs through the TV's menu); the caller knows the
+// track's real name and language, so the server rewrites the line at serve
+// time either way.
 func RewriteMasterPlaylist(content, name, lang string) string {
 	if name == "" {
 		name = "Subtitles"
