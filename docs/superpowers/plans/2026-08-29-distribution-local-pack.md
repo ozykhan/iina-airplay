@@ -144,16 +144,17 @@ Do not invent these values. Run:
 curl -fsSL https://ffmpeg.org/releases/ | grep -oE 'ffmpeg-9\.[0-9]+(\.[0-9]+)?\.tar\.xz' | sort -uV | tail -3
 ```
 
-Take the newest. Then fetch the tarball and its published checksum, and confirm they agree:
+Take the newest. **ffmpeg.org publishes no `.sha256` sidecar** — that URL 404s, verified 2026-08-29 — so verify the tarball against its GPG signature, which ffmpeg.org does publish, and only then compute the hash you will pin:
 
 ```bash
 V=<version>   # e.g. 9.0.1
 curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-$V.tar.xz"
-curl -fsSL "https://ffmpeg.org/releases/ffmpeg-$V.tar.xz.sha256"
+curl -fsSLO "https://ffmpeg.org/releases/ffmpeg-$V.tar.xz.asc"
+gpg --verify "ffmpeg-$V.tar.xz.asc" "ffmpeg-$V.tar.xz"
 shasum -a 256 "ffmpeg-$V.tar.xz"
 ```
 
-If the two hashes differ, stop and report it — that is a supply-chain signal, not a hiccup. Otherwise record the version and hash as the literals in Step 2.
+The signature must verify against FFmpeg's documented release key before you trust the tarball. If it does not verify, stop and report it — that is a supply-chain signal, not a hiccup. Otherwise record the version and the computed hash as the literals in Step 2; from then on the pinned hash is what guards every later build.
 
 - [ ] **Step 2: Write the recipe script**
 
