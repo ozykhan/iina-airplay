@@ -274,8 +274,13 @@ case "$ARCH_MODE" in
     # ffmpeg's configure appends repeated --extra-cflags (add_cflags uses
     # `append`), so these accumulate with the -mmacosx-version-min flags
     # rather than replacing them.
+    # No --cpu: ffmpeg's configure maps it to -march, and clang rejects
+    # -march=x86_64 ("unknown target CPU"; it spells that value x86-64).
+    # Leaving it unset also keeps the baseline generic, which is what a
+    # binary shipped to strangers wants — a specific -march would narrow
+    # which Intel Macs can run it.
     build_one x86_64 10.15 \
-      --enable-cross-compile --arch=x86_64 --cpu=x86_64 --target-os=darwin \
+      --enable-cross-compile --arch=x86_64 --target-os=darwin \
       --cc=clang --extra-cflags="-arch x86_64" --extra-ldflags="-arch x86_64"
     lipo -create "$OUT/arm64/ffmpeg" "$OUT/x86_64/ffmpeg" -output "$OUT/ffmpeg"
     ;;
