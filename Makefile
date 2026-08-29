@@ -35,7 +35,9 @@ ffmpeg:
 test-bundled:
 	cd helper && IINA_AIRPLAY_FFMPEG=$(BUNDLED_FFMPEG) go test ./...
 
-pack: ffmpeg
+pack:
+	rm -f build/iina-airplay.iinaplgz
+	$(MAKE) ffmpeg
 	./packaging/build-helper.sh
 	./packaging/pack.sh
 	./packaging/verify.sh build/iina-airplay.iinaplgz

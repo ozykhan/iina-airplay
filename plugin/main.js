@@ -193,7 +193,7 @@ if (typeof iina !== "undefined") {
       // The bundled ffmpeg is built --disable-network and has no protocol
       // handler for these at all, so say so plainly rather than letting
       // ffmpeg fail obscurely.
-      var streamMsg = "AirPlay can only cast local files, not network streams";
+      var streamMsg = "can only cast local files, not network streams";
       core.osd("AirPlay: " + streamMsg);
       state = { phase: "error", url: null, pct: 0, msg: streamMsg };
       return;
@@ -210,7 +210,9 @@ if (typeof iina !== "undefined") {
     }
     var tracks = selectTracks(mpv.getNative("track-list") || []);
     if (!tracks) {
-      core.osd("AirPlay: no castable video/audio tracks");
+      var tracksMsg = "no castable video/audio tracks";
+      core.osd("AirPlay: " + tracksMsg);
+      state = { phase: "error", url: null, pct: 0, msg: tracksMsg };
       return;
     }
     if (tracks.subDropped) {

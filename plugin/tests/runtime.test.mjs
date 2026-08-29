@@ -197,6 +197,16 @@ test("nothing playing sets the error state too, not just the OSD", () => {
   assert.match(p.state().msg, /nothing is playing/i);
 });
 
+test("no castable tracks sets the error state too, not just the OSD", () => {
+  const p = loadPlugin({ tracks: [] });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /no castable video\/audio tracks/i.test(m)));
+  assert.equal(serves(p).length, 0);
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /no castable video\/audio tracks/i);
+});
+
 test("a file:// URI is normalized and cast, not declined as a network stream", () => {
   const p = loadPlugin({ path: "file:///movies/a.mkv" });
   p.clickMenu();

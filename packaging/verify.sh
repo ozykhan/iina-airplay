@@ -87,16 +87,14 @@ entry="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])
 # what's in the repo. Compare byte-for-byte against plugin/ when it's
 # available (it may legitimately not be — this script also verifies packages
 # downloaded standalone, outside a repo checkout).
-if [ -f "$SRC_ROOT/$entry" ] && [ -f "$SRC_ROOT/sidebar.html" ] && [ -f "$SRC_ROOT/Info.json" ]; then
-  cmp -s "$TMP/$entry" "$SRC_ROOT/$entry" \
-    || fail "$entry in the package does not match $SRC_ROOT/$entry — the package is stale; re-run packaging/pack.sh"
-  cmp -s "$TMP/sidebar.html" "$SRC_ROOT/sidebar.html" \
-    || fail "sidebar.html in the package does not match $SRC_ROOT/sidebar.html — the package is stale; re-run packaging/pack.sh"
-  cmp -s "$TMP/Info.json" "$SRC_ROOT/Info.json" \
-    || fail "Info.json in the package does not match $SRC_ROOT/Info.json — the package is stale; re-run packaging/pack.sh"
-else
-  echo "verify: note — source tree not found at $SRC_ROOT; skipping the stale-package comparison (expected when verifying a package outside a repo checkout)" >&2
-fi
+for rel in "$entry" sidebar.html Info.json; do
+  if [ -f "$SRC_ROOT/$rel" ]; then
+    cmp -s "$TMP/$rel" "$SRC_ROOT/$rel" \
+      || fail "$rel in the package does not match $SRC_ROOT/$rel — the package is stale; re-run packaging/pack.sh"
+  else
+    echo "verify: note — $SRC_ROOT/$rel not found; skipping its stale-package comparison (expected when verifying a package outside a repo checkout)" >&2
+  fi
+done
 
 # --- binaries: presence and mode first ---------------------------------------
 # A separate pass, ahead of anything that inspects architectures or

@@ -34,7 +34,7 @@ assumed to exist (python3 ships with Xcode CLT, not macOS). Three candidates:
 3. **Bundle both: supervisor + pinned static ffmpeg CLI in the package.** What
    remains when 1 and 2 lose their signature features. Fully offline after install,
    media edge cases stay ffmpeg's problem, contributors build JS+Go trivially while
-   CI owns the ffmpeg build. Cost: a 24.7 MB package (measured: 24,663,895 bytes,
+   CI owns the ffmpeg build. Cost: a 24.7 MB package (measured: 24,674,608 bytes,
    containing ffmpeg 9.0.1 universal at 43.3 MB and the helper universal at
    12.2 MB before zip compression) — a one-time download through IINA's
    installer, where a big file is least painful. **Chosen.**
@@ -73,7 +73,7 @@ uninstallable source tree). For users who cannot reach GitHub: document IINA's
 ## Package layout
 
 ```
-iina-airplay.iinaplgz            (24.7 MB measured: 24,663,895 bytes, zipped)
+iina-airplay.iinaplgz            (24.7 MB measured: 24,674,608 bytes, zipped)
 ├── Info.json                    sidebarTab, permissions, ghRepo/ghVersion (updates)
 ├── main.js / sidebar.html / …   the plugin
 └── bin/

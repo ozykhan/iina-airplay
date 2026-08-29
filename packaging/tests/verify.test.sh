@@ -152,6 +152,45 @@ else
   echo "ok: stale main.js is caught by the staleness check"
 fi
 
+# --- staleness: partial source tree must not skip the whole comparison -------
+# Demonstrated failure before this fix: a source tree with a differing
+# main.js, a matching Info.json, and NO sidebar.html made verify.sh skip ALL
+# THREE comparisons (the old check required every one of the three files to
+# exist before comparing any of them), so the stale main.js was silently
+# blessed. Each file must now be compared independently — sidebar.html being
+# absent from the source tree must not excuse main.js from being checked.
+partial_root="$TMP/partial-plugin-src"
+mkdir -p "$partial_root"
+cat > "$partial_root/Info.json" <<'JSON'
+{"name":"AirPlay","identifier":"dev.faruk.iina-airplay","version":"0.1.0",
+ "ghRepo":"ozykhan/iina-airplay","ghVersion":1,"entry":"main.js","permissions":[]}
+JSON
+echo "// authoritative source — deliberately different from the packaged main.js" > "$partial_root/main.js"
+# deliberately no sidebar.html in $partial_root
+partial_pkg="$(make_pkg partial noop)"
+partial_out="$(VERIFY_SRC_ROOT="$partial_root" "$VERIFY" "$partial_pkg" 2>&1)"
+partial_status=$?
+# Match the specific main.js-mismatch failure, not a bare "stale" substring —
+# the pre-fix skip note itself says "skipping the stale-package comparison",
+# so a loose grep for "stale" would be fooled by that note into reporting a
+# pass even when the actual staleness check never ran and the fixture just
+# happened to fail later for an unrelated reason (e.g. its stub binaries
+# aren't real Mach-O, so the arch check trips instead).
+if [ "$partial_status" -eq 0 ]; then
+  echo "FAIL: partial source tree — verify.sh accepted a stale main.js because sidebar.html was missing from the source tree"
+  fails=$((fails + 1))
+elif grep -qi "skipping the stale-package comparison" <<<"$partial_out"; then
+  echo "FAIL: partial source tree — the staleness check was skipped entirely (and the package was rejected only for an unrelated reason), instead of comparing main.js/Info.json independently of the missing sidebar.html:"
+  echo "$partial_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+elif ! grep -qi "main.js in the package does not match" <<<"$partial_out"; then
+  echo "FAIL: partial source tree — rejected, but not for the expected main.js mismatch:"
+  echo "$partial_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+else
+  echo "ok: a stale main.js is caught even when sidebar.html is absent from the source tree"
+fi
+
 # --- positive case: a real, freshly-packed .iinaplgz must verify OK ----------
 # All the fixtures above prove verify.sh REJECTS broken packages; none of them
 # prove it ACCEPTS a good one — a regression that made verify.sh always fail
