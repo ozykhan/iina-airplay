@@ -78,12 +78,32 @@ function isValidPid(pid) {
   return typeof pid === "number" && isFinite(pid) && pid > 0;
 }
 
+// mpv's "path" is a URL whenever IINA is playing a network stream. The bundled
+// ffmpeg is built --disable-network and has no protocol handler for those, so
+// the plugin declines up front instead of letting ffmpeg fail obscurely.
+function hasURLScheme(p) {
+  return !!p && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
+}
+
+// mpv usually reports a bare filesystem path, but can hand back a file:// URI.
+// That names a local file we can cast, so strip the scheme and percent-decode
+// rather than declining it — and do this before the URL-scheme test, which
+// would otherwise call it a network stream.
+function normalizeSource(p) {
+  if (!p || p.indexOf("file://") !== 0) return p;
+  var rest = p.slice("file://".length);
+  if (rest.indexOf("localhost/") === 0) rest = rest.slice("localhost".length);
+  try { return decodeURIComponent(rest); } catch (e) { return rest; }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
     isValidPid: isValidPid,
+    hasURLScheme: hasURLScheme,
+    normalizeSource: normalizeSource,
   };
 }
 
@@ -117,14 +137,34 @@ if (typeof iina !== "undefined") {
     if (cached && cached.trim()) { cb(cached.trim(), null); return; }
     var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data/"));
     if (!pluginsDir) { cb(null, "cannot resolve plugins directory"); return; }
+    // com.apple.quarantine does NOT clear the executable bit (verified: a
+    // quarantined file still passes `[ -x ]`), so the `-x` test alone cannot
+    // catch the browser-download case docs/distribution.md and README.md
+    // promise is detected. Worse, exec'ing a quarantined binary blocks on a
+    // Gatekeeper dialog instead of failing fast, so check for the xattr with
+    // `/usr/bin/xattr -p` (absolute path — /bin/sh via utils.exec runs with
+    // an empty PATH) BEFORE anything ever execs the binary. `xattr -p`
+    // succeeding (exit 0) means the attribute is present, i.e. quarantined.
     var script =
       'for d in "$1"/*/; do' +
       '  if /usr/bin/grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
-      '    printf %s "$d"bin; exit 0; fi; done; exit 1';
+      '    h="$d"bin/airplay-helper; f="$d"bin/ffmpeg;' +
+      '    if [ -x "$h" ] && [ -x "$f" ] ' +
+      '        && ! /usr/bin/xattr -p com.apple.quarantine "$h" >/dev/null 2>&1 ' +
+      '        && ! /usr/bin/xattr -p com.apple.quarantine "$f" >/dev/null 2>&1; then' +
+      '      printf %s "$d"bin; exit 0;' +
+      '    fi;' +
+      '    exit 3;' +           // found the plugin, but its binaries won't run
+      '  fi;' +
+      'done; exit 1';
     utils.exec("/bin/sh", ["-c", script, "sh", pluginsDir]).then(function (r) {
       if (r.status === 0 && r.stdout) {
         file.write("@data/bindir.txt", r.stdout);
         cb(r.stdout, null);
+      } else if (r.status === 3) {
+        // Never offer to download anything — docs/distribution.md non-goals.
+        cb(null, "the bundled helper or ffmpeg is missing, not executable, or quarantined; " +
+                 "reinstall the plugin through IINA (Settings → Plugins → Install)");
       } else {
         cb(null, "cannot locate plugin bin directory");
       }
@@ -142,14 +182,37 @@ if (typeof iina !== "undefined") {
 
   function startCast() {
     if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
-    var src = mpv.getString("path");
-    if (!src || src.charAt(0) !== "/") {
-      core.osd("AirPlay: only local files can be cast");
+    var src = normalizeSource(mpv.getString("path"));
+    if (!src) {
+      var nothingMsg = "nothing is playing";
+      core.osd("AirPlay: " + nothingMsg);
+      state = { phase: "error", url: null, pct: 0, msg: nothingMsg };
+      return;
+    }
+    if (hasURLScheme(src)) {
+      // The bundled ffmpeg is built --disable-network and has no protocol
+      // handler for these at all, so say so plainly rather than letting
+      // ffmpeg fail obscurely.
+      var streamMsg = "can only cast local files, not network streams";
+      core.osd("AirPlay: " + streamMsg);
+      state = { phase: "error", url: null, pct: 0, msg: streamMsg };
+      return;
+    }
+    if (src.charAt(0) !== "/") {
+      // A relative path: the pipeline hands src straight to ffmpeg as -i,
+      // which wants a plain absolute path. (file:// URIs no longer reach
+      // this branch — normalizeSource above turns them into absolute paths
+      // before either guard runs.)
+      var pathMsg = "needs a local file path";
+      core.osd("AirPlay: " + pathMsg);
+      state = { phase: "error", url: null, pct: 0, msg: pathMsg };
       return;
     }
     var tracks = selectTracks(mpv.getNative("track-list") || []);
     if (!tracks) {
-      core.osd("AirPlay: no castable video/audio tracks");
+      var tracksMsg = "no castable video/audio tracks";
+      core.osd("AirPlay: " + tracksMsg);
+      state = { phase: "error", url: null, pct: 0, msg: tracksMsg };
       return;
     }
     if (tracks.subDropped) {

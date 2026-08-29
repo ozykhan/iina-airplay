@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, parseHelperEvents, pluginsDirFromDataDir, isValidPid } = require("../main.js");
+const { selectTracks, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -118,6 +118,40 @@ test("pluginsDirFromDataDir returns null for an unexpected shape", () => {
   assert.equal(pluginsDirFromDataDir("/Users/x/somewhere/else"), null);
   assert.equal(pluginsDirFromDataDir(""), null);
   assert.equal(pluginsDirFromDataDir(null), null);
+});
+
+test("hasURLScheme rejects filesystem paths", () => {
+  assert.equal(hasURLScheme("/movies/a.mkv"), false);
+  assert.equal(hasURLScheme("/Volumes/Media/Show S01E01.mkv"), false);
+});
+
+test("hasURLScheme accepts network streams the bundled ffmpeg cannot open", () => {
+  // The bundled ffmpeg is built --disable-network, so these have no protocol
+  // handler at all. Say so plainly rather than letting ffmpeg fail obscurely.
+  for (const url of ["http://x/y.mp4", "https://x/y.mp4", "rtsp://x/y", "ytdl://abc"]) {
+    assert.equal(hasURLScheme(url), true, url);
+  }
+});
+
+test("normalizeSource strips the file:// scheme", () => {
+  assert.equal(normalizeSource("file:///movies/a.mkv"), "/movies/a.mkv");
+});
+
+test("normalizeSource strips file://localhost/ too", () => {
+  assert.equal(normalizeSource("file://localhost/movies/a.mkv"), "/movies/a.mkv");
+});
+
+test("normalizeSource percent-decodes the path", () => {
+  assert.equal(normalizeSource("file:///movies/My%20Film.mkv"), "/movies/My Film.mkv");
+});
+
+test("normalizeSource passes a bare path through unchanged", () => {
+  assert.equal(normalizeSource("/movies/a.mkv"), "/movies/a.mkv");
+});
+
+test("normalizeSource does not throw on a malformed percent-escape", () => {
+  assert.doesNotThrow(() => normalizeSource("file:///bad%ZZ.mkv"));
+  assert.equal(normalizeSource("file:///bad%ZZ.mkv"), "/bad%ZZ.mkv");
 });
 
 test("isValidPid accepts positive finite numbers only", () => {

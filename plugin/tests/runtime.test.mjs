@@ -23,7 +23,7 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => {} },
     mpv: {
-      getString: (k) => (k === "path" ? "/movies/a.mkv" : null),
+      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv") : null),
       getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120 : 0),
       getNative: () => trackList,
     },
@@ -39,9 +39,18 @@ function loadPlugin(opts = {}) {
     },
     utils: {
       resolvePath: (p) => "/plugins/.data/dev.faruk.iina-airplay" + (p === "@tmp/hls" ? "/tmp/hls" : ""),
-      exec: (bin, args) => { execs.push({ bin, args }); return new Promise(() => {}); },
+      exec: (bin, args) => {
+        execs.push({ bin, args });
+        // opts.binDirLookup scripts the /bin/sh lookup that resolveBinDir runs
+        // when no bin dir is cached; everything else hangs, as before.
+        if (bin === "/bin/sh" && opts.binDirLookup) return Promise.resolve(opts.binDirLookup);
+        return new Promise(() => {});
+      },
     },
-    file: { read: () => "/plugins/dev.faruk.iina-airplay/bin", write: () => {} },
+    file: {
+      read: () => (opts.binDirLookup ? "" : "/plugins/dev.faruk.iina-airplay/bin"),
+      write: () => {},
+    },
     console: { log: () => {} },
   };
 
@@ -141,4 +150,66 @@ test("no sub flags when no sub is selected", () => {
   assert.equal(args.indexOf("-smap"), -1);
   assert.equal(args.indexOf("-subpath"), -1);
   assert.equal(args.indexOf("-sublang"), -1);
+});
+
+test("a broken install names the fix instead of leaking an exec error", async () => {
+  // Exit 3 is resolveBinDir's signal for "found the plugin, but its binaries
+  // are missing or not executable" — a hand-copied or quarantined install.
+  const p = loadPlugin({ binDirLookup: { status: 3, stdout: "" } });
+  p.clickMenu();
+  await new Promise((r) => setImmediate(r)); // let the exec promise settle
+  p.send("getState", {}); // simulate the page's poll to read the async result
+  const s = p.state();
+  assert.equal(s.phase, "error");
+  assert.match(s.msg, /reinstall/i);
+  assert.match(s.msg, /IINA/);
+  assert.equal(serves(p).length, 0, "a broken install must not spawn the helper");
+});
+
+test("a network stream is declined with the stream-specific message, not silently absolute-path-rejected", () => {
+  const p = loadPlugin({ path: "http://192.168.1.5:8080/video.mp4" });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /network stream/i.test(m)), "expected an OSD naming network streams");
+  assert.equal(serves(p).length, 0, "a network stream must not spawn the helper");
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /network stream/i);
+});
+
+test("a relative path gets the local-file-path message, not the network-stream one", () => {
+  const p = loadPlugin({ path: "movie.mkv" });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /local file path/i.test(m)), "expected an OSD naming the local-file-path problem");
+  assert.ok(!p.osd.some(m => /network stream/i.test(m)), "a relative path is not a network stream");
+  assert.equal(serves(p).length, 0, "a relative path must not spawn the helper");
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /local file path/i);
+});
+
+test("nothing playing sets the error state too, not just the OSD", () => {
+  const p = loadPlugin({ path: null });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /nothing is playing/i.test(m)));
+  assert.equal(serves(p).length, 0);
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /nothing is playing/i);
+});
+
+test("no castable tracks sets the error state too, not just the OSD", () => {
+  const p = loadPlugin({ tracks: [] });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /no castable video\/audio tracks/i.test(m)));
+  assert.equal(serves(p).length, 0);
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /no castable video\/audio tracks/i);
+});
+
+test("a file:// URI is normalized and cast, not declined as a network stream", () => {
+  const p = loadPlugin({ path: "file:///movies/a.mkv" });
+  p.clickMenu();
+  assert.equal(serves(p).length, 1, "a file:// URI names a real local file that should be castable");
+  assert.ok(!p.osd.some(m => /network stream/i.test(m)), "file:// must not be mislabelled a network stream");
 });
