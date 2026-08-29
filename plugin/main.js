@@ -210,6 +210,13 @@ if (typeof iina !== "undefined") {
     sidebar.onMessage("getState", function () {
       sidebar.postMessage("state", state); // onMessage handlers are main-thread safe
     });
+    // The page owns starting too, not just stopping: stopCast() tears the whole
+    // pipeline down, so without this the sidebar would be a dead end and the
+    // only way back to a cast would be re-running the menu item.
+    sidebar.onMessage("start", function () {
+      startCast();
+      sidebar.postMessage("state", state);
+    });
     sidebar.onMessage("stop", function () {
       stopCast();
       sidebar.postMessage("state", state);

@@ -20,7 +20,7 @@
   <p id="status">Preparing…</p>
   <div id="bar"><div id="fill"></div></div>
   <button id="pick" disabled>Send to TV</button>
-  <button id="stop">Stop casting</button>
+  <button id="cast">Stop casting</button>
   <p id="err"></p>
 </div>
 <video id="v" autoplay playsinline x-webkit-airplay="allow"></video>
@@ -28,6 +28,7 @@
 <script>
   var v = document.getElementById("v");
   var pick = document.getElementById("pick");
+  var castBtn = document.getElementById("cast");
   var statusEl = document.getElementById("status");
   var errEl = document.getElementById("err");
   var fill = document.getElementById("fill");
@@ -35,8 +36,14 @@
   var retried = false;      // known WebKit flake: first load may fail once
   var airplayAvailable = false;
   var onTV = false;
+  var casting = false;
 
   function render(s) {
+    casting = s.phase === "starting" || s.phase === "ready" || s.phase === "packaged";
+    castBtn.textContent = casting ? "Stop casting" : "Start casting";
+    // Nothing to hand to a TV when no stream is loaded, and the availability
+    // event can lag a teardown — so gate the picker on the cast, not just on it.
+    pick.disabled = !airplayAvailable || !casting;
     fill.style.width = (s.pct || 0) + "%";
     if (s.phase === "error") { statusEl.textContent = "Failed."; errEl.textContent = s.msg || ""; return; }
     errEl.textContent = "";
@@ -56,7 +63,8 @@
   }
 
   v.addEventListener("error", function () {
-    if (!retried && loadedURL) {           // retry exactly once (docs/prototype.md)
+    if (!loadedURL) return;                // src cleared by a stop, not a real failure
+    if (!retried) {                        // retry exactly once (docs/prototype.md)
       retried = true;
       v.src = loadedURL;
       v.play().catch(function () {});
@@ -67,7 +75,7 @@
   });
   v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {
     airplayAvailable = ev.availability === "available";
-    pick.disabled = !airplayAvailable;
+    pick.disabled = !airplayAvailable || !casting;
   });
   v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", function () {
     onTV = !!v.webkitCurrentPlaybackTargetIsWireless;
@@ -75,10 +83,16 @@
   pick.onclick = function () {
     if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
   };
-  document.getElementById("stop").onclick = function () {
-    v.pause(); v.removeAttribute("src"); v.load();
-    loadedURL = null; onTV = false;
-    iina.postMessage("stop", {});
+  castBtn.onclick = function () {
+    if (casting) {
+      v.pause(); v.removeAttribute("src"); v.load();
+      loadedURL = null; retried = false; onTV = false;
+      iina.postMessage("stop", {});
+    } else {
+      errEl.textContent = "";
+      statusEl.textContent = "Packaging…";
+      iina.postMessage("start", {});
+    }
   };
   iina.onMessage("state", render);
   setInterval(function () { iina.postMessage("getState", {}); }, 500);
