@@ -85,6 +85,17 @@ function hasURLScheme(p) {
   return !!p && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
 }
 
+// mpv usually reports a bare filesystem path, but can hand back a file:// URI.
+// That names a local file we can cast, so strip the scheme and percent-decode
+// rather than declining it — and do this before the URL-scheme test, which
+// would otherwise call it a network stream.
+function normalizeSource(p) {
+  if (!p || p.indexOf("file://") !== 0) return p;
+  var rest = p.slice("file://".length);
+  if (rest.indexOf("localhost/") === 0) rest = rest.slice("localhost".length);
+  try { return decodeURIComponent(rest); } catch (e) { return rest; }
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
@@ -92,6 +103,7 @@ if (typeof module !== "undefined") {
     pluginsDirFromDataDir: pluginsDirFromDataDir,
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
+    normalizeSource: normalizeSource,
   };
 }
 
@@ -159,7 +171,7 @@ if (typeof iina !== "undefined") {
 
   function startCast() {
     if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
-    var src = mpv.getString("path");
+    var src = normalizeSource(mpv.getString("path"));
     if (!src) {
       core.osd("AirPlay: nothing is playing");
       return;
@@ -174,11 +186,10 @@ if (typeof iina !== "undefined") {
       return;
     }
     if (src.charAt(0) !== "/") {
-      // Covers relative paths and file:// URIs alike: the pipeline hands src
-      // straight to ffmpeg as -i, which wants a plain absolute path, not a
-      // URI. Deliberately not folded into the URL-scheme branch above — a
-      // file:// path is a local-path problem, not a network-stream one, and
-      // deserves the accurate message rather than being mislabelled.
+      // A relative path: the pipeline hands src straight to ffmpeg as -i,
+      // which wants a plain absolute path. (file:// URIs no longer reach
+      // this branch — normalizeSource above turns them into absolute paths
+      // before either guard runs.)
       core.osd("AirPlay: AirPlay needs a local file path");
       return;
     }

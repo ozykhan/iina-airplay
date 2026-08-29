@@ -63,7 +63,7 @@ happens, Developer ID signing drops into the CI pipeline without design changes.
 
 ## Install channel
 
-Users type the GitHub repo slug (`owner/iina-airplay`) into IINA → Settings →
+Users type the GitHub repo slug (`ozykhan/iina-airplay`) into IINA → Settings →
 Plugins → Install. IINA queries the repo's **latest GitHub release** for an
 `.iinaplgz` asset and installs it (falling back to `archive/main.zip` of the
 source if none — so every release must carry the asset, or users get an
@@ -150,5 +150,5 @@ decoders for whatever codec it's re-encoding from.
 Homebrew/ffmpeg detection or reuse (bundling makes it dead weight), Developer ID
 signing (until macOS forces it), any runtime network access by the plugin or
 helper, and Windows/Linux anything. Also: network-protocol support in the
-bundled ffmpeg (`--disable-network` above) — network stream sources are
+bundled ffmpeg (it is built `--disable-network`) — network stream sources are
 declined by the plugin with a clear message rather than being fetched.

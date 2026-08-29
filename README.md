@@ -57,10 +57,14 @@ binary.
 ## Dev quickstart
 
 ```sh
-brew install ffmpeg go node nasm
+brew install ffmpeg go node
 make dev        # builds the helper, symlinks brew's ffmpeg into plugin/bin,
                  # links the plugin into IINA
 ```
+
+`make dev` only needs the four packages above — it uses brew's `ffmpeg`, it
+never builds one from source. `nasm` is a separate prerequisite, needed only
+if you'll also run `make pack` / `make ffmpeg` (see above): `brew install nasm`.
 
 Restart IINA to pick up plugin changes (`standaloneWindow`/`sidebar` are
 WKWebViews and don't hot-reload JS on their own). Enable the plugin under

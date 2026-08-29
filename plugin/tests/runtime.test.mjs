@@ -180,3 +180,10 @@ test("a relative path gets the local-file-path message, not the network-stream o
   assert.ok(!p.osd.some(m => /network stream/i.test(m)), "a relative path is not a network stream");
   assert.equal(serves(p).length, 0, "a relative path must not spawn the helper");
 });
+
+test("a file:// URI is normalized and cast, not declined as a network stream", () => {
+  const p = loadPlugin({ path: "file:///movies/a.mkv" });
+  p.clickMenu();
+  assert.equal(serves(p).length, 1, "a file:// URI names a real local file that should be castable");
+  assert.ok(!p.osd.some(m => /network stream/i.test(m)), "file:// must not be mislabelled a network stream");
+});
