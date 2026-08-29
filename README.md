@@ -11,10 +11,14 @@ IINA stays the remote control. See `docs/feasibility.md` for the full reasoning
 and the format-handling matrix.
 
 **Status:** v0 core is implemented and works from source — plugin (`plugin/`),
-Go helper (`helper/`), full test suite. Human end-to-end acceptance at a real TV
-is pending (a person has to watch the picture and click the button). Packaged
-releases (`.iinaplgz`, pinned static ffmpeg, GitHub-release install flow) are not
-built yet — that's the next plan; see `docs/distribution.md`.
+Go helper (`helper/`), full test suite. Text subtitles (embedded or external
+SRT/ASS; the track selected in IINA) are carried as a WebVTT rendition the TV
+shows via its own subtitle menu. ASS styling is flattened to plain text; image
+subs (PGS/DVD) can't be cast and are dropped with a notice — burn-in is a
+possible future round. Human end-to-end acceptance at a real TV is pending (a
+person has to watch the picture and click the button). Packaged releases
+(`.iinaplgz`, pinned static ffmpeg, GitHub-release install flow) are not built
+yet — that's the next plan; see `docs/distribution.md`.
 
 ## Dev quickstart
 
