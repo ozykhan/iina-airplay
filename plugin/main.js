@@ -153,7 +153,7 @@ if (typeof iina !== "undefined") {
       return;
     }
     if (tracks.subDropped) {
-      core.osd("AirPlay: selected subtitles can't be cast (image-based or unsupported); casting without them");
+      core.osd("AirPlay: selected subtitles can't be cast (image-based, unsupported, or file not found); casting without them");
     }
     var pid = getIINAPid();
     if (!isValidPid(pid)) {
