@@ -14,7 +14,25 @@ import (
 	"time"
 )
 
+// findFFmpeg returns the ffmpeg under test — the pipeline's ffmpeg. Set
+// IINA_AIRPLAY_FFMPEG to point the suite at the bundled build produced by
+// packaging/build-ffmpeg.sh; a bad path fails loudly rather than falling back,
+// so a typo can never be mistaken for a passing bundled build.
 func findFFmpeg(t *testing.T) string {
+	t.Helper()
+	if p := os.Getenv("IINA_AIRPLAY_FFMPEG"); p != "" {
+		if _, err := os.Stat(p); err != nil {
+			t.Fatalf("IINA_AIRPLAY_FFMPEG=%q is not usable: %v", p, err)
+		}
+		return p
+	}
+	return findSystemFFmpeg(t)
+}
+
+// findSystemFFmpeg returns a full-featured ffmpeg for authoring test fixtures.
+// Fixtures need libx264, flac, srt and the matroska muxer — exactly what the
+// bundled LGPL build excludes — so this deliberately stays on Homebrew's.
+func findSystemFFmpeg(t *testing.T) string {
 	t.Helper()
 	for _, p := range []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"} {
 		if _, err := os.Stat(p); err == nil {
@@ -42,7 +60,7 @@ func makeFixture(t *testing.T, ffmpeg string) string {
 
 func TestRealFFmpegEndToEnd(t *testing.T) {
 	ffmpeg := findFFmpeg(t)
-	fixture := makeFixture(t, ffmpeg)
+	fixture := makeFixture(t, findSystemFFmpeg(t))
 	bin := buildHelper(t)
 	out := t.TempDir()
 
@@ -147,7 +165,7 @@ func mediaURI(line string) string {
 
 func TestRealFFmpegSubtitledEndToEnd(t *testing.T) {
 	ffmpeg := findFFmpeg(t)
-	fixture := makeSubbedFixture(t, ffmpeg)
+	fixture := makeSubbedFixture(t, findSystemFFmpeg(t))
 	bin := buildHelper(t)
 	out := t.TempDir()
 
@@ -220,5 +238,16 @@ func TestRealFFmpegSubtitledEndToEnd(t *testing.T) {
 	resp3.Body.Close()
 	if !strings.Contains(string(body3), "hello from iina-airplay") {
 		t.Fatalf("cue text missing from first vtt segment:\n%s", body3)
+	}
+}
+
+func TestFindFFmpegPrefersEnvOverride(t *testing.T) {
+	fake := filepath.Join(t.TempDir(), "ffmpeg")
+	if err := os.WriteFile(fake, []byte("#!/bin/sh\nexit 0\n"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	t.Setenv("IINA_AIRPLAY_FFMPEG", fake)
+	if got := findFFmpeg(t); got != fake {
+		t.Fatalf("findFFmpeg = %q, want the env override %q", got, fake)
 	}
 }
