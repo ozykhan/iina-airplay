@@ -6,15 +6,30 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 STAGE="$ROOT/build/stage/iina-airplay"
 FFMPEG="$ROOT/build/ffmpeg/ffmpeg"
 FFVERSION="$ROOT/build/ffmpeg/VERSION"
+FFLICENSE="$ROOT/build/ffmpeg/src/COPYING.LGPLv2.1"
 HELPER="$ROOT/build/helper/airplay-helper"
 PLUGIN_INFO="$ROOT/plugin/Info.json"
 PLUGIN_MAIN="$ROOT/plugin/main.js"
 PLUGIN_SIDEBAR="$ROOT/plugin/sidebar.html"
 IINA_PLUGIN="${IINA_PLUGIN:-/Applications/IINA.app/Contents/MacOS/iina-plugin}"
+CANONICAL_PKG="$ROOT/build/iina-airplay.iinaplgz"
+
+# A failed run past this point must not leave the PREVIOUS package sitting at
+# the canonical path: verify.sh and `make verify` both just check whatever is
+# there, and would silently bless stale bits from an earlier, unrelated build.
+# Remove it before any work that can fail, so a failed pack leaves no package
+# rather than a misleading one.
+rm -f "$CANONICAL_PKG"
 
 for f in "$FFMPEG" "$FFVERSION" "$HELPER"; do
   [ -f "$f" ] || { echo "pack: missing $f — run build-ffmpeg.sh and build-helper.sh first" >&2; exit 1; }
 done
+
+# LGPL 2.1 §1 requires distribution to be accompanied by a copy of the licence,
+# not merely a link to it. build-ffmpeg.sh's extracted source tree carries the
+# upstream COPYING.LGPLv2.1 at this path — fail loudly rather than silently
+# shipping a package that only links gnu.org.
+[ -f "$FFLICENSE" ] || { echo "pack: missing $FFLICENSE — the ffmpeg source tree is missing its LGPL license text; re-run build-ffmpeg.sh" >&2; exit 1; }
 
 for f in "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR"; do
   [ -f "$f" ] || { echo "pack: missing $f — the plugin source tree is incomplete" >&2; exit 1; }
@@ -85,6 +100,7 @@ rm -rf "$ROOT/build/stage" && mkdir -p "$STAGE/bin"
 cp "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$STAGE/"
 cp "$FFMPEG" "$STAGE/bin/ffmpeg"
 cp "$HELPER" "$STAGE/bin/airplay-helper"
+cp "$FFLICENSE" "$STAGE/bin/COPYING.LGPLv2.1"
 chmod 755 "$STAGE/bin/ffmpeg" "$STAGE/bin/airplay-helper"
 
 helper_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
@@ -107,6 +123,8 @@ ffmpeg_sha256=$(shasum -a 256 "$STAGE/bin/ffmpeg" | cut -d' ' -f1)
 ffmpeg_source_sha256=$source_sha256
 EOF
 
+REPO_URL="https://github.com/ozykhan/iina-airplay"
+
 cat > "$STAGE/bin/ffmpeg-LICENSE.md" <<EOF
 # FFmpeg
 
@@ -117,10 +135,12 @@ and \`--enable-gpl\` was never passed.
 
 - Upstream source: $source_url
 - Source SHA-256: $source_sha256
-- Build recipe: \`packaging/build-ffmpeg.sh\` in the iina-airplay repository$commit_note,
+- Build recipe: \`packaging/build-ffmpeg.sh\` in $REPO_URL$commit_note,
   which contains the complete configure line used to produce this binary.
 
-The LGPL text is available at https://www.gnu.org/licenses/lgpl-2.1.html.
+A copy of the license text is included alongside this file as
+\`bin/COPYING.LGPLv2.1\` (also available at
+https://www.gnu.org/licenses/lgpl-2.1.html).
 
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
 EOF
@@ -134,6 +154,6 @@ version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$S
 [ -n "$version" ] || { echo "pack: cannot read version from Info.json" >&2; exit 1; }
 ( cd "$ROOT/build" && rm -f "iina-airplay-$version.iinaplgz" \
   && "$IINA_PLUGIN" pack "stage/iina-airplay" >/dev/null )
-mv "$ROOT/build/iina-airplay-$version.iinaplgz" "$ROOT/build/iina-airplay.iinaplgz"
+mv "$ROOT/build/iina-airplay-$version.iinaplgz" "$CANONICAL_PKG"
 
-echo "pack: wrote $ROOT/build/iina-airplay.iinaplgz"
+echo "pack: wrote $CANONICAL_PKG"

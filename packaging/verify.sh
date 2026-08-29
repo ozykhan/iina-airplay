@@ -4,6 +4,13 @@
 # names the real problem rather than a downstream symptom.
 set -uo pipefail
 
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+# Overridable so packaging/tests/verify.test.sh can point the staleness check
+# at an isolated fixture source tree instead of this repo's real plugin/ —
+# otherwise every synthetic test fixture would spuriously fail as "stale"
+# against the real plugin/ sources that happen to live next to this script.
+SRC_ROOT="${VERIFY_SRC_ROOT:-$ROOT/plugin}"
+
 PKG="${1:-}"
 [ -n "$PKG" ] && [ -f "$PKG" ] || { echo "usage: verify.sh <package.iinaplgz>" >&2; exit 2; }
 
@@ -55,7 +62,41 @@ if not re.fullmatch(r"[\w-]+/[\w-]+", str(info["ghRepo"])):
 if not isinstance(info["ghVersion"], int) or isinstance(info["ghVersion"], bool):
     print("verify: FAILED — ghVersion must be a JSON integer, not "
           f"{type(info['ghVersion']).__name__}", file=sys.stderr); sys.exit(1)
+if not info.get("entry"):
+    print("verify: FAILED — Info.json has no entry", file=sys.stderr); sys.exit(1)
 PY
+
+# --- plugin payload: the code, not just the manifest --------------------------
+# A package can have a perfectly valid Info.json and still ship none of the
+# actual plugin — nothing here previously asserted that the file Info.json
+# names as `entry` exists, nor sidebar.html, nor the licensing artifacts.
+# Read the entry filename from Info.json rather than hardcoding main.js, since
+# that's the contract IINA itself follows.
+entry="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("entry",""))' "$TMP/Info.json" 2>/dev/null)"
+[ -n "$entry" ] || fail "Info.json has no entry"
+[ -s "$TMP/$entry" ] || fail "the entry file ($entry, named by Info.json) is missing or empty from the package"
+[ -s "$TMP/sidebar.html" ] || fail "sidebar.html is missing or empty from the package"
+[ -s "$TMP/bin/VERSIONS" ] || fail "bin/VERSIONS is missing or empty from the package"
+[ -s "$TMP/bin/ffmpeg-LICENSE.md" ] || fail "bin/ffmpeg-LICENSE.md is missing or empty from the package"
+[ -s "$TMP/bin/COPYING.LGPLv2.1" ] || fail "bin/COPYING.LGPLv2.1 is missing or empty from the package (LGPL 2.1 requires shipping a copy of the license text, not just a link)"
+
+# --- plugin payload: not stale ------------------------------------------------
+# Presence alone isn't enough: a pack.sh run that failed AFTER copying the
+# plugin files from an old checkout, or a package built from a stale plugin/
+# tree, still passes every check above while shipping code that doesn't match
+# what's in the repo. Compare byte-for-byte against plugin/ when it's
+# available (it may legitimately not be — this script also verifies packages
+# downloaded standalone, outside a repo checkout).
+if [ -f "$SRC_ROOT/$entry" ] && [ -f "$SRC_ROOT/sidebar.html" ] && [ -f "$SRC_ROOT/Info.json" ]; then
+  cmp -s "$TMP/$entry" "$SRC_ROOT/$entry" \
+    || fail "$entry in the package does not match $SRC_ROOT/$entry — the package is stale; re-run packaging/pack.sh"
+  cmp -s "$TMP/sidebar.html" "$SRC_ROOT/sidebar.html" \
+    || fail "sidebar.html in the package does not match $SRC_ROOT/sidebar.html — the package is stale; re-run packaging/pack.sh"
+  cmp -s "$TMP/Info.json" "$SRC_ROOT/Info.json" \
+    || fail "Info.json in the package does not match $SRC_ROOT/Info.json — the package is stale; re-run packaging/pack.sh"
+else
+  echo "verify: note — source tree not found at $SRC_ROOT; skipping the stale-package comparison (expected when verifying a package outside a repo checkout)" >&2
+fi
 
 # --- binaries: presence and mode first ---------------------------------------
 # A separate pass, ahead of anything that inspects architectures or
@@ -98,22 +139,53 @@ for rel in bin/airplay-helper bin/ffmpeg; do
 done
 
 # --- ffmpeg licensing and capabilities --------------------------------------
+# ffmpeg is a universal binary. Running "$FF" -version directly only ever
+# exercises the slice matching the host's own architecture — arm64 has its own
+# separate configure invocation from x86_64 (see build-ffmpeg.sh), so on an
+# Apple Silicon verifier the x86_64 slice's licensing and capability set was
+# never actually checked, only structurally (arch/signature) above. Run the
+# same assertions against both slices: the native one directly, and x86_64
+# through `arch -x86_64` (Rosetta), which this machine has installed.
 FF="$TMP/bin/ffmpeg"
-config="$("$FF" -hide_banner -version 2>/dev/null)" || fail "bin/ffmpeg does not run"
-grep -q -- '--enable-gpl'     <<<"$config" && fail "bundled ffmpeg was built with --enable-gpl"
-grep -q -- '--enable-nonfree' <<<"$config" && fail "bundled ffmpeg was built with --enable-nonfree"
 
-encoders="$("$FF" -hide_banner -encoders 2>/dev/null)"
-for e in aac eac3 hevc_videotoolbox h264_videotoolbox webvtt; do
-  grep -qw "$e" <<<"$encoders" || fail "bundled ffmpeg lacks the $e encoder"
-done
-grep -qw libx264 <<<"$encoders" && fail "bundled ffmpeg contains libx264 (GPL)"
+check_ffmpeg_slice() {
+  # $1: label for messages ("arm64 (native)", "x86_64"). $2: "1" to run
+  # through `arch -x86_64`, empty to run the binary directly.
+  slice_label="$1"
+  slice_use_arch="$2"
+  if [ "$slice_use_arch" = "1" ]; then
+    slice_config="$(/usr/bin/arch -x86_64 "$FF" -hide_banner -version 2>/dev/null)" \
+      || fail "bin/ffmpeg ($slice_label slice) does not run"
+    slice_encoders="$(/usr/bin/arch -x86_64 "$FF" -hide_banner -encoders 2>/dev/null)"
+    slice_decoders="$(/usr/bin/arch -x86_64 "$FF" -hide_banner -decoders 2>/dev/null)"
+  else
+    slice_config="$("$FF" -hide_banner -version 2>/dev/null)" \
+      || fail "bin/ffmpeg ($slice_label slice) does not run"
+    slice_encoders="$("$FF" -hide_banner -encoders 2>/dev/null)"
+    slice_decoders="$("$FF" -hide_banner -decoders 2>/dev/null)"
+  fi
 
-decoders="$("$FF" -hide_banner -decoders 2>/dev/null)"
-for d in h264 hevc vp9 av1 mpeg2video; do
-  grep -qw "$d" <<<"$decoders" \
-    || fail "bundled ffmpeg lacks the $d decoder; helper/job.go's re-encode branch needs it"
-done
+  grep -q -- '--enable-gpl'     <<<"$slice_config" && fail "bundled ffmpeg ($slice_label slice) was built with --enable-gpl"
+  grep -q -- '--enable-nonfree' <<<"$slice_config" && fail "bundled ffmpeg ($slice_label slice) was built with --enable-nonfree"
+
+  for e in aac eac3 hevc_videotoolbox h264_videotoolbox webvtt; do
+    grep -qw "$e" <<<"$slice_encoders" || fail "bundled ffmpeg ($slice_label slice) lacks the $e encoder"
+  done
+  grep -qw libx264 <<<"$slice_encoders" && fail "bundled ffmpeg ($slice_label slice) contains libx264 (GPL)"
+
+  for d in h264 hevc vp9 av1 mpeg2video; do
+    grep -qw "$d" <<<"$slice_decoders" \
+      || fail "bundled ffmpeg ($slice_label slice) lacks the $d decoder; helper/job.go's re-encode branch needs it"
+  done
+}
+
+check_ffmpeg_slice "$(uname -m) (native)" ""
+
+if /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+  check_ffmpeg_slice "x86_64" "1"
+else
+  echo "verify: note — Rosetta (arch -x86_64) is unavailable on this machine; skipping the x86_64-slice ffmpeg assertions" >&2
+fi
 
 # --- linkage ----------------------------------------------------------------
 # The check that catches a package working only on the machine that built it.

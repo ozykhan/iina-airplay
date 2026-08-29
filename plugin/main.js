@@ -137,10 +137,21 @@ if (typeof iina !== "undefined") {
     if (cached && cached.trim()) { cb(cached.trim(), null); return; }
     var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data/"));
     if (!pluginsDir) { cb(null, "cannot resolve plugins directory"); return; }
+    // com.apple.quarantine does NOT clear the executable bit (verified: a
+    // quarantined file still passes `[ -x ]`), so the `-x` test alone cannot
+    // catch the browser-download case docs/distribution.md and README.md
+    // promise is detected. Worse, exec'ing a quarantined binary blocks on a
+    // Gatekeeper dialog instead of failing fast, so check for the xattr with
+    // `/usr/bin/xattr -p` (absolute path — /bin/sh via utils.exec runs with
+    // an empty PATH) BEFORE anything ever execs the binary. `xattr -p`
+    // succeeding (exit 0) means the attribute is present, i.e. quarantined.
     var script =
       'for d in "$1"/*/; do' +
       '  if /usr/bin/grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
-      '    if [ -x "$d"bin/airplay-helper ] && [ -x "$d"bin/ffmpeg ]; then' +
+      '    h="$d"bin/airplay-helper; f="$d"bin/ffmpeg;' +
+      '    if [ -x "$h" ] && [ -x "$f" ] ' +
+      '        && ! /usr/bin/xattr -p com.apple.quarantine "$h" >/dev/null 2>&1 ' +
+      '        && ! /usr/bin/xattr -p com.apple.quarantine "$f" >/dev/null 2>&1; then' +
       '      printf %s "$d"bin; exit 0;' +
       '    fi;' +
       '    exit 3;' +           // found the plugin, but its binaries won't run
@@ -152,7 +163,7 @@ if (typeof iina !== "undefined") {
         cb(r.stdout, null);
       } else if (r.status === 3) {
         // Never offer to download anything — docs/distribution.md non-goals.
-        cb(null, "the bundled helper or ffmpeg is missing or not executable; " +
+        cb(null, "the bundled helper or ffmpeg is missing, not executable, or quarantined; " +
                  "reinstall the plugin through IINA (Settings → Plugins → Install)");
       } else {
         cb(null, "cannot locate plugin bin directory");
@@ -173,7 +184,9 @@ if (typeof iina !== "undefined") {
     if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
     var src = normalizeSource(mpv.getString("path"));
     if (!src) {
-      core.osd("AirPlay: nothing is playing");
+      var nothingMsg = "nothing is playing";
+      core.osd("AirPlay: " + nothingMsg);
+      state = { phase: "error", url: null, pct: 0, msg: nothingMsg };
       return;
     }
     if (hasURLScheme(src)) {
@@ -190,7 +203,9 @@ if (typeof iina !== "undefined") {
       // which wants a plain absolute path. (file:// URIs no longer reach
       // this branch — normalizeSource above turns them into absolute paths
       // before either guard runs.)
-      core.osd("AirPlay: AirPlay needs a local file path");
+      var pathMsg = "needs a local file path";
+      core.osd("AirPlay: " + pathMsg);
+      state = { phase: "error", url: null, pct: 0, msg: pathMsg };
       return;
     }
     var tracks = selectTracks(mpv.getNative("track-list") || []);

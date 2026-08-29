@@ -30,6 +30,22 @@ if [ "$ARCH_MODE" = "universal" ] && ! command -v nasm >/dev/null 2>&1; then
   exit 1
 fi
 
+# universal mode's arm64 build_one call below passes no cross-compile flags at
+# all — it relies on the host itself being Apple Silicon, unlike the x86_64
+# call which explicitly cross-compiles. On an Intel host that silently
+# produces a SECOND x86_64 build instead of arm64, and the failure only
+# surfaces ~40 minutes later at the final `lipo -create`, with a message that
+# never says the host architecture was the actual cause. Fail fast here
+# instead. (Not attempting to make Intel hosts actually build a universal
+# binary — that would need real cross-compile flags for the arm64 leg too.)
+if [ "$ARCH_MODE" = "universal" ] && [ "$(uname -m)" != "arm64" ]; then
+  echo "build-ffmpeg: universal mode needs an Apple Silicon (arm64) build host — this machine is $(uname -m)." >&2
+  echo "  The arm64 leg below cross-compiles nothing; it just builds native, which only produces" >&2
+  echo "  a correct arm64 slice when the host already IS arm64. Build on an Apple Silicon Mac, or" >&2
+  echo "  pass --arch native here to build only for this host's own architecture." >&2
+  exit 1
+fi
+
 # Any change to this script — a flag, the pinned version — invalidates the
 # cached build. Hashing the script itself is the whole cache-key story.
 RECIPE_HASH="$(shasum -a 256 "${BASH_SOURCE[0]}" | cut -d' ' -f1)"

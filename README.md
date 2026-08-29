@@ -62,7 +62,7 @@ make dev        # builds the helper, symlinks brew's ffmpeg into plugin/bin,
                  # links the plugin into IINA
 ```
 
-`make dev` only needs the four packages above — it uses brew's `ffmpeg`, it
+`make dev` only needs the three packages above — it uses brew's `ffmpeg`, it
 never builds one from source. `nasm` is a separate prerequisite, needed only
 if you'll also run `make pack` / `make ffmpeg` (see above): `brew install nasm`.
 
@@ -77,7 +77,8 @@ tries to serve, or the Apple TV can't reach the stream.
 ## Tests
 
 ```sh
-make test       # go test ./... in helper/, plus node --test over plugin/tests/
+make test       # go test ./... in helper/, node --test over plugin/tests/,
+                 # plus packaging/tests/verify.test.sh
 ```
 
 ## Docs

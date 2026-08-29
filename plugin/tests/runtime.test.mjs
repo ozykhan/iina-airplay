@@ -171,6 +171,9 @@ test("a network stream is declined with the stream-specific message, not silentl
   p.clickMenu();
   assert.ok(p.osd.some(m => /network stream/i.test(m)), "expected an OSD naming network streams");
   assert.equal(serves(p).length, 0, "a network stream must not spawn the helper");
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /network stream/i);
 });
 
 test("a relative path gets the local-file-path message, not the network-stream one", () => {
@@ -179,6 +182,19 @@ test("a relative path gets the local-file-path message, not the network-stream o
   assert.ok(p.osd.some(m => /local file path/i.test(m)), "expected an OSD naming the local-file-path problem");
   assert.ok(!p.osd.some(m => /network stream/i.test(m)), "a relative path is not a network stream");
   assert.equal(serves(p).length, 0, "a relative path must not spawn the helper");
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /local file path/i);
+});
+
+test("nothing playing sets the error state too, not just the OSD", () => {
+  const p = loadPlugin({ path: null });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /nothing is playing/i.test(m)));
+  assert.equal(serves(p).length, 0);
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error", "a sidebar-only viewer must see the error, not a stuck button");
+  assert.match(p.state().msg, /nothing is playing/i);
 });
 
 test("a file:// URI is normalized and cast, not declined as a network stream", () => {

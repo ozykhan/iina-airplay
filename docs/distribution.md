@@ -6,9 +6,9 @@
 > into IINA, no Apple Developer ID.**
 
 > **Status 2026-08-29:** the package is built locally by `make pack` and
-> verified by `packaging/verify.sh`. CI, the tagged GitHub release, and the
-> x86_64 slice actually being *executed* rather than only structurally checked
-> remain outstanding — see
+> verified by `packaging/verify.sh`, which now runs its licensing and
+> capability assertions against both the arm64 and (via Rosetta) x86_64
+> slices. CI and the tagged GitHub release remain outstanding — see
 > `docs/superpowers/specs/2026-08-29-distribution-local-pack-design.md`.
 
 ## The decision, and the two designs it beat
@@ -79,7 +79,9 @@ iina-airplay.iinaplgz            (24.7 MB measured: 24,663,895 bytes, zipped)
 └── bin/
     ├── airplay-helper           Go, universal, ad-hoc signed (12.2 MB)
     ├── ffmpeg                   static, universal, LGPL configure (43.3 MB)
-    ├── ffmpeg-LICENSE.md        LGPL notice + pinned source-tarball URL
+    ├── ffmpeg-LICENSE.md        LGPL notice, repo + pinned source-tarball URL
+    ├── COPYING.LGPLv2.1         the LGPL 2.1 license text itself (LGPL §1
+                                  requires a copy be shipped, not just linked)
     └── VERSIONS                 helper + ffmpeg versions and SHA-256 of both,
                                   plus the SHA-256 of the ffmpeg *source* tarball
 ```
@@ -115,7 +117,9 @@ toolchain.
 Pinned release, custom LGPL-only configure: no GPL components (no libx264 — any
 re-encode uses VideoToolbox), demuxers/decoders broad (MKV et al. must all open),
 encoders limited to `aac`, `eac3`, `hevc_videotoolbox`, `h264_videotoolbox`,
-`webvtt`, muxers `hls`/`mp4`/`webvtt`. LGPL keeps the plugin itself MIT-licensable;
+`webvtt`, muxers `hls`/`mp4`/`mov`/`webvtt`/`mpegts` (`mov` and `mpegts` are
+both load-bearing for the HLS path, not incidental). LGPL keeps the plugin
+itself MIT-licensable;
 compliance = ship the license notice and link the exact source tarball in
 `bin/ffmpeg-LICENSE.md` and the release notes.
 
