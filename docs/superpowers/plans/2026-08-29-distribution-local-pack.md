@@ -902,7 +902,7 @@ Then `chmod +x packaging/verify.sh`.
 Run: `./packaging/tests/verify.test.sh`
 Expected: four `ok:` lines and `all verify.sh tests passed`.
 
-The stub fixtures are shell scripts, so `lipo -archs` reports no slices for them. That is why the check order in `verify.sh` matters and is not arbitrary: manifest, then quarantine, then the binary loop (presence and mode before `lipo`), then ffmpeg behaviour, then linkage. Each fixture is designed to trip exactly one check before reaching one it cannot satisfy. If a case fails with the wrong message, fix the ordering in `verify.sh` — do not weaken a check to make a fixture pass.
+The stub fixtures are shell scripts, so `lipo -archs` reports no slices for them. That is why the check order in `verify.sh` matters and is not arbitrary: quarantine (on the package file, before extraction), then manifest, then the binary loop (presence and mode before `lipo`), then ffmpeg behaviour, then linkage. Each fixture is designed to trip exactly one check before reaching one it cannot satisfy. If a case fails with the wrong message, fix the ordering in `verify.sh` — do not weaken a check to make a fixture pass.
 
 - [ ] **Step 5: Verify the real package**
 

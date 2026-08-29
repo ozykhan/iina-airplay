@@ -115,9 +115,13 @@ That last assertion is the one that earns its keep: a leaked `/opt/homebrew`
 dylib produces a package that works perfectly on the build machine and fails on
 every other Mac.
 
-Checks run in a deliberate order — manifest, quarantine, binary presence and
+Checks run in a deliberate order — quarantine, manifest, binary presence and
 mode, architectures and signatures, ffmpeg behaviour, linkage — so that a
-failure names the actual problem rather than a downstream symptom. Any failure
+failure names the actual problem rather than a downstream symptom. Quarantine
+comes first because it is the only check on the `.iinaplgz` file itself rather
+than on its contents, so it has to run before the archive is extracted. It is
+checked there and not on the extracted tree because `zip`/`unzip` do not carry
+extended attributes across: a post-extraction scan could never fail. Any failure
 exits non-zero naming the specific check.
 
 `verify.sh` uses `/usr/bin/python3` to parse `Info.json`. That is an Xcode
