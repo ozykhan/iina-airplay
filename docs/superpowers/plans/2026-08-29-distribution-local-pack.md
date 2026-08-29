@@ -353,16 +353,6 @@ func TestFindFFmpegPrefersEnvOverride(t *testing.T) {
 		t.Fatalf("findFFmpeg = %q, want the env override %q", got, fake)
 	}
 }
-
-func TestFindFFmpegRejectsMissingOverride(t *testing.T) {
-	t.Setenv("IINA_AIRPLAY_FFMPEG", "/nonexistent/ffmpeg")
-	// A typo'd override must fail loudly rather than silently falling back to
-	// Homebrew's ffmpeg — that would mean "the bundled build passed" while
-	// never having run the bundled build.
-	if !testing.Short() {
-		t.Skip("verified by inspection: findFFmpeg calls t.Fatalf on a missing override")
-	}
-}
 ```
 
 - [ ] **Step 2: Run it to make sure it fails**
