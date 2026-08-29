@@ -115,7 +115,15 @@ That last assertion is the one that earns its keep: a leaked `/opt/homebrew`
 dylib produces a package that works perfectly on the build machine and fails on
 every other Mac.
 
-Any failure exits non-zero with a message naming the specific check.
+Checks run in a deliberate order — manifest, quarantine, binary presence and
+mode, architectures and signatures, ffmpeg behaviour, linkage — so that a
+failure names the actual problem rather than a downstream symptom. Any failure
+exits non-zero naming the specific check.
+
+`verify.sh` uses `/usr/bin/python3` to parse `Info.json`. That is an Xcode
+Command Line Tools dependency, not a plain-macOS one, which is acceptable here:
+verification only ever runs on a machine that already has the CLT for `clang`,
+`lipo` and `codesign`. Nothing in the shipped package depends on it.
 
 ### Testing the trimmed build
 
@@ -148,6 +156,14 @@ HLS path needs.
   `plugin/main.js`. It becomes one clear message naming the fix — reinstall
   through IINA's plugin installer — as `docs/distribution.md`'s first failure
   mode requires. Never a download attempt.
+- **Network-stream guard.** `--disable-network` has a user-visible consequence
+  the design did not originally account for: `plugin/main.js` passes
+  `mpv.getString("path")` straight to ffmpeg, and that path is a URL whenever
+  IINA is playing a network stream. Homebrew's ffmpeg opens those; the bundled
+  one deliberately cannot. So the plugin declines a non-local source up front
+  with a plain message rather than surfacing an obscure protocol error. This
+  ships in the same task as the failure message above, because the packaging
+  work is what creates the need for it.
 - **`Makefile`**: `ffmpeg`, `pack` and `verify` targets. `make dev` keeps
   symlinking Homebrew's ffmpeg, so the fast development loop never waits on a
   source build.
