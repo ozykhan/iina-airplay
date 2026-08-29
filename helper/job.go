@@ -93,6 +93,13 @@ func BuildArgs(c JobConfig) []string {
 		"-hls_segment_filename", filepath.Join(c.OutDir, "seg_%04d.m4s"),
 	)
 	if c.HasSub() {
+		// v:0/a:0/s:0 are positions within each stream type among the MAPPED
+		// output streams (BuildArgs always maps exactly one video, one audio,
+		// one subtitle, in that order) — not ff-indices — so this is correct
+		// for any -vmap/-amap/-smap values. Without -var_stream_map, ffmpeg
+		// writes the subtitle rendition to disk but omits the
+		// #EXT-X-MEDIA:TYPE=SUBTITLES line from the master playlist.
+		args = append(args, "-var_stream_map", "v:0,a:0,s:0,sgroup:subs")
 		args = append(args, "-master_pl_name", "master.m3u8")
 	}
 	return append(args, filepath.Join(c.OutDir, "index.m3u8"))

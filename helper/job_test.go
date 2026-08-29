@@ -207,6 +207,7 @@ func TestBuildArgsEmbeddedSub(t *testing.T) {
 	args := BuildArgs(c)
 	argsHave(t, args, "-map", "0:3", "-dn")
 	argsHave(t, args, "-c:s", "webvtt")
+	argsHave(t, args, "-var_stream_map", "v:0,a:0,s:0,sgroup:subs")
 	argsHave(t, args, "-master_pl_name", "master.m3u8")
 	if slices.Contains(args, "-sn") {
 		t.Fatal("-sn must be dropped when a subtitle is mapped")
@@ -221,6 +222,7 @@ func TestBuildArgsExternalSub(t *testing.T) {
 	argsHave(t, args, "-i", "/subs/en.srt")
 	argsHave(t, args, "-map", "1:0", "-dn")
 	argsHave(t, args, "-c:s", "webvtt")
+	argsHave(t, args, "-var_stream_map", "v:0,a:0,s:0,sgroup:subs")
 	if slices.Index(args, "/subs/en.srt") < slices.Index(args, "/movies/a.mkv") {
 		t.Fatal("subtitle input must come after the media input (it must be input 1)")
 	}
