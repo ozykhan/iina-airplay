@@ -3,6 +3,7 @@ package main
 import (
 	"bufio"
 	"encoding/json"
+	"errors"
 	"fmt"
 	"io"
 	"net/http"
@@ -14,15 +15,91 @@ import (
 	"time"
 )
 
-// Builds the helper binary once for integration tests.
+// bundledHelperEnv names the environment variable that points the suite at an
+// already-built helper — the universal binary inside a packed .iinaplgz —
+// instead of compiling one from source. packaging/test-package.sh sets it.
+const bundledHelperEnv = "IINA_AIRPLAY_HELPER"
+
+// locateHelper is the pure decision behind buildHelper: given the value of
+// IINA_AIRPLAY_HELPER and a stat function, it returns either the binary to use,
+// a request to build one, or a fatal message. It takes no *testing.T so the
+// decision can be table-tested with fake paths, mirroring locateSystemFFmpeg in
+// e2e_test.go.
+//
+// A set-but-unusable path is FATAL, never a fall back to `go build`: the reason
+// to set this variable at all is to exercise the shipped binary, so a silent
+// fallback would let a typo be mistaken for a passing bundled-binary run.
+func locateHelper(env string, stat func(string) error) (path string, build bool, fatal string) {
+	if env == "" {
+		return "", true, ""
+	}
+	if err := stat(env); err != nil {
+		return "", false, fmt.Sprintf("%s=%q is not usable: %v", bundledHelperEnv, env, err)
+	}
+	return env, false, ""
+}
+
+// Builds the helper binary once for integration tests — or returns the bundled
+// one when IINA_AIRPLAY_HELPER points at it. Every test that calls this then
+// drives the shipped universal binary, not just the e2e ones, so the watchdog,
+// the pidfile takeover and the stdout protocol get exercised on whichever
+// architecture is running the suite.
 func buildHelper(t *testing.T) string {
 	t.Helper()
+	path, build, fatal := locateHelper(os.Getenv(bundledHelperEnv), func(p string) error {
+		_, err := os.Stat(p)
+		return err
+	})
+	if fatal != "" {
+		t.Fatal(fatal)
+	}
+	if !build {
+		return path
+	}
 	bin := filepath.Join(t.TempDir(), "airplay-helper")
 	cmd := exec.Command("go", "build", "-o", bin, ".")
 	if out, err := cmd.CombinedOutput(); err != nil {
 		t.Fatalf("build: %v\n%s", err, out)
 	}
 	return bin
+}
+
+func TestLocateHelper(t *testing.T) {
+	statOK := func(string) error { return nil }
+	statMissing := func(string) error { return errors.New("no such file or directory") }
+
+	t.Run("unset builds from source", func(t *testing.T) {
+		path, build, fatal := locateHelper("", statMissing)
+		if !build || path != "" || fatal != "" {
+			t.Fatalf("got (%q, %v, %q), want (\"\", true, \"\")", path, build, fatal)
+		}
+	})
+
+	t.Run("set and present is used as-is", func(t *testing.T) {
+		path, build, fatal := locateHelper("/pkg/bin/airplay-helper", statOK)
+		if path != "/pkg/bin/airplay-helper" || build || fatal != "" {
+			t.Fatalf("got (%q, %v, %q), want the bundled path with no build and no fatal", path, build, fatal)
+		}
+	})
+
+	// The whole point of setting this variable is to exercise the SHIPPED
+	// binary. A silent fallback to `go build` would let a typo in the CI
+	// workflow read as a passing bundled-binary run — which is precisely the
+	// failure the Intel job exists to rule out. Same contract as findFFmpeg.
+	t.Run("set but unusable is fatal, never a fallback", func(t *testing.T) {
+		_, build, fatal := locateHelper("/nope/airplay-helper", statMissing)
+		if build {
+			t.Fatal("a bad IINA_AIRPLAY_HELPER fell back to building from source; a typo must fail loudly")
+		}
+		if fatal == "" {
+			t.Fatal("want a fatal message, got none")
+		}
+		for _, want := range []string{"IINA_AIRPLAY_HELPER", "/nope/airplay-helper"} {
+			if !strings.Contains(fatal, want) {
+				t.Errorf("fatal message %q does not mention %q", fatal, want)
+			}
+		}
+	})
 }
 
 func TestServeEndToEndWithStub(t *testing.T) {
