@@ -244,8 +244,13 @@ build_one() {
   # cannot reference an earlier one without tripping `set -u`.
   local arch="$1"
   local minver="$2"
-  local extra="$3"
+  shift 2
   local dest="$OUT/$arch"
+  # Remaining positional args are this arch's extra configure flags, passed
+  # through as "$@". Do NOT collect them into a single string: a flag whose
+  # value contains a space ("-arch x86_64") cannot survive unquoted word
+  # splitting, and quoting the backslash inside double quotes makes it a
+  # literal backslash rather than an escape.
   rm -rf "$dest" && mkdir -p "$dest"
   ( cd "$SRC" && make distclean >/dev/null 2>&1 || true )
   # shellcheck disable=SC2046
@@ -254,19 +259,24 @@ build_one() {
       $(common_flags) \
       --extra-cflags="-mmacosx-version-min=$minver" \
       --extra-ldflags="-mmacosx-version-min=$minver" \
-      $extra \
+      "$@" \
     && make -j"$(sysctl -n hw.ncpu)" \
     && cp ffmpeg "$dest/ffmpeg" )
 }
 
 case "$ARCH_MODE" in
   native)
-    build_one arm64 11.0 ""
+    build_one arm64 11.0
     cp "$OUT/arm64/ffmpeg" "$OUT/ffmpeg"
     ;;
   universal)
-    build_one arm64 11.0 ""
-    build_one x86_64 10.15 "--enable-cross-compile --arch=x86_64 --cpu=x86_64 --target-os=darwin --cc=clang --extra-cflags=-arch\ x86_64 --extra-ldflags=-arch\ x86_64"
+    build_one arm64 11.0
+    # ffmpeg's configure appends repeated --extra-cflags (add_cflags uses
+    # `append`), so these accumulate with the -mmacosx-version-min flags
+    # rather than replacing them.
+    build_one x86_64 10.15 \
+      --enable-cross-compile --arch=x86_64 --cpu=x86_64 --target-os=darwin \
+      --cc=clang --extra-cflags="-arch x86_64" --extra-ldflags="-arch x86_64"
     lipo -create "$OUT/arm64/ffmpeg" "$OUT/x86_64/ffmpeg" -output "$OUT/ffmpeg"
     ;;
   *)
