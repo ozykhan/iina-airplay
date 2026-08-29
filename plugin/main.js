@@ -5,8 +5,13 @@
 
 // ---- pure functions (node-testable) ----
 
+// Sub codecs ffmpeg can convert to WebVTT. Image codecs (hdmv_pgs_subtitle,
+// dvd_subtitle) and anything unknown can't pass through to the TV without a
+// burn-in re-encode — out of scope, see docs/superpowers/specs/.
+var TEXT_SUB_CODECS = { subrip: 1, srt: 1, ass: 1, ssa: 1, mov_text: 1, webvtt: 1, text: 1 };
+
 function selectTracks(trackList) {
-  var video = null, audio = null, firstAudio = null;
+  var video = null, audio = null, firstAudio = null, sub = null;
   for (var i = 0; i < trackList.length; i++) {
     var t = trackList[i];
     if (t.type === "video" && (!video || t.selected)) video = t;
@@ -14,17 +19,29 @@ function selectTracks(trackList) {
       if (firstAudio === null) firstAudio = t;
       if (t.selected) audio = t;
     }
+    if (t.type === "sub" && t.selected) sub = t;
   }
   if (!video) return null;
   if (!audio) audio = firstAudio;
   if (!audio) return null;
-  return {
+  var r = {
     vcodec: video.codec,
     acodec: audio.codec,
     achannels: audio["demux-channel-count"] || 2,
     vmap: video["ff-index"],
     amap: audio["ff-index"],
+    sub: null,
+    subDropped: false,
   };
+  if (sub) {
+    var path = sub.external ? (sub["external-filename"] || null) : null;
+    if (!TEXT_SUB_CODECS[sub.codec] || (sub.external && !path)) {
+      r.subDropped = true;
+    } else {
+      r.sub = { path: path, smap: sub["ff-index"], lang: sub.lang || "", title: sub.title || "" };
+    }
+  }
+  return r;
 }
 
 function parseHelperEvents(buffer, chunk) {

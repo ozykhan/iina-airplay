@@ -13,7 +13,10 @@ const mpvTracks = [
 
 test("selectTracks picks selected audio and first video", () => {
   const r = selectTracks(mpvTracks);
-  assert.deepEqual(r, { vcodec: "hevc", acodec: "truehd", achannels: 8, vmap: 0, amap: 2 });
+  assert.deepEqual(r, {
+    vcodec: "hevc", acodec: "truehd", achannels: 8, vmap: 0, amap: 2,
+    sub: { path: null, smap: 3, lang: "", title: "" }, subDropped: false,
+  });
 });
 
 test("selectTracks falls back to first audio when none selected", () => {
@@ -33,6 +36,50 @@ test("selectTracks defaults channels to 2 when missing", () => {
     { type: "audio", id: 1, selected: true, codec: "opus", "ff-index": 1 },
   ];
   assert.equal(selectTracks(tracks).achannels, 2);
+});
+
+test("selectTracks ignores unselected sub tracks", () => {
+  const tracks = mpvTracks.map(t => (t.type === "sub" ? { ...t, selected: false } : t));
+  const r = selectTracks(tracks);
+  assert.equal(r.sub, null);
+  assert.equal(r.subDropped, false);
+});
+
+test("selectTracks carries lang and title of the selected text sub", () => {
+  const tracks = mpvTracks.map(t =>
+    t.type === "sub" ? { ...t, lang: "en", title: "English (SDH)" } : t);
+  assert.deepEqual(selectTracks(tracks).sub,
+    { path: null, smap: 3, lang: "en", title: "English (SDH)" });
+});
+
+test("selectTracks uses the external file path for external subs", () => {
+  const tracks = mpvTracks.map(t =>
+    t.type === "sub" ? { ...t, external: true, "external-filename": "/subs/en.srt" } : t);
+  const r = selectTracks(tracks);
+  assert.equal(r.sub.path, "/subs/en.srt");
+  assert.equal(r.subDropped, false);
+});
+
+test("selectTracks drops an external sub with no usable path", () => {
+  const tracks = mpvTracks.map(t =>
+    t.type === "sub" ? { ...t, external: true } : t);
+  const r = selectTracks(tracks);
+  assert.equal(r.sub, null);
+  assert.equal(r.subDropped, true);
+});
+
+test("selectTracks drops image subs (PGS) and flags it", () => {
+  const tracks = mpvTracks.map(t =>
+    t.type === "sub" ? { ...t, codec: "hdmv_pgs_subtitle" } : t);
+  const r = selectTracks(tracks);
+  assert.equal(r.sub, null);
+  assert.equal(r.subDropped, true);
+});
+
+test("selectTracks drops unknown sub codecs", () => {
+  const tracks = mpvTracks.map(t =>
+    t.type === "sub" ? { ...t, codec: "some_future_codec" } : t);
+  assert.equal(selectTracks(tracks).subDropped, true);
 });
 
 test("parseHelperEvents handles split and batched lines", () => {
