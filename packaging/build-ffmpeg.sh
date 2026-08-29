@@ -164,8 +164,12 @@ case "$ARCH_MODE" in
     # (add_cflags/add_ldflags use `append`), so these accumulate with the
     # -mmacosx-version-min flags added inside build_one rather than
     # replacing them.
+    # Omit --cpu: configure maps it to -march, and clang rejects -march=x86_64
+    # with "unknown target CPU". The -arch x86_64 from --extra-cflags already
+    # applies correctly; leaving --cpu unset keeps the baseline generic for a
+    # binary shipped to strangers.
     build_one x86_64 10.15 \
-      --enable-cross-compile --arch=x86_64 --cpu=x86_64 --target-os=darwin \
+      --enable-cross-compile --arch=x86_64 --target-os=darwin \
       --cc=clang --extra-cflags="-arch x86_64" --extra-ldflags="-arch x86_64"
     lipo -create "$OUT/arm64/ffmpeg" "$OUT/x86_64/ffmpeg" -output "$OUT/ffmpeg"
     ;;
