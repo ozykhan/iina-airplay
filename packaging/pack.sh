@@ -11,7 +11,6 @@ HELPER="$ROOT/build/helper/airplay-helper"
 PLUGIN_INFO="$ROOT/plugin/Info.json"
 PLUGIN_MAIN="$ROOT/plugin/main.js"
 PLUGIN_SIDEBAR="$ROOT/plugin/sidebar.html"
-IINA_PLUGIN="${IINA_PLUGIN:-/Applications/IINA.app/Contents/MacOS/iina-plugin}"
 CANONICAL_PKG="$ROOT/build/iina-airplay.iinaplgz"
 
 # A failed run past this point must not leave the PREVIOUS package sitting at
@@ -34,8 +33,6 @@ done
 for f in "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR"; do
   [ -f "$f" ] || { echo "pack: missing $f — the plugin source tree is incomplete" >&2; exit 1; }
 done
-
-[ -x "$IINA_PLUGIN" ] || { echo "pack: IINA_PLUGIN ($IINA_PLUGIN) not found or not executable — install IINA or set IINA_PLUGIN to the iina-plugin CLI path" >&2; exit 1; }
 
 # A binary that merely exists is not a binary a user's Mac will run: IINA's
 # installer applies no com.apple.quarantine, so the ad-hoc signature is the
@@ -145,15 +142,11 @@ https://www.gnu.org/licenses/lgpl-2.1.html).
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
 EOF
 
-# iina-plugin pack writes <dirname>-<version>.iinaplgz into the CURRENT
-# directory, not next to the source dir — so run it from a known cwd and move
-# the result to a stable name. It also only succeeds with a path RELATIVE to
-# that cwd: an absolute path fails with "Cannot read plugin package content."
-# (verified by experiment), so pass "stage/iina-airplay", not "$STAGE".
-version="$(sed -n 's/.*"version"[[:space:]]*:[[:space:]]*"\([^"]*\)".*/\1/p' "$STAGE/Info.json" | head -1)"
-[ -n "$version" ] || { echo "pack: cannot read version from Info.json" >&2; exit 1; }
-( cd "$ROOT/build" && rm -f "iina-airplay-$version.iinaplgz" \
-  && "$IINA_PLUGIN" pack "stage/iina-airplay" >/dev/null )
-mv "$ROOT/build/iina-airplay-$version.iinaplgz" "$CANONICAL_PKG"
+# Packs to the canonical path directly. The old iina-plugin CLI wrote
+# <dirname>-<version>.iinaplgz into the current directory and had to be moved;
+# zip-plugin.sh takes the destination as an argument, so the version-extraction
+# and the mv both go away with it. See zip-plugin.sh for why we no longer
+# shell out to IINA.app.
+"$ROOT/packaging/zip-plugin.sh" "$STAGE" "$CANONICAL_PKG"
 
 echo "pack: wrote $CANONICAL_PKG"
