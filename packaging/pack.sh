@@ -31,6 +31,22 @@ verify_binary() {
   bin_path="$2"
   rebuild_hint="$3"
 
+  # codesign -dv only parses and prints the embedded signature blob — it does
+  # not re-hash the file, so a binary corrupted or truncated after signing
+  # (partial copy, disk error, interrupted write) still prints a clean
+  # "Signature=adhoc" line. codesign --verify does the actual cryptographic
+  # check that the bytes on disk still match that signature. Neither check
+  # implies the other, so run both, integrity first — a corrupted binary's
+  # label isn't worth trusting.
+  set +e
+  verify_out="$(codesign --verify --strict "$bin_path" 2>&1)"
+  verify_status=$?
+  set -e
+  if [ "$verify_status" -ne 0 ]; then
+    echo "pack: $bin_label ($bin_path) failed signature verification — its bytes do not match its signature (corrupted or truncated after signing) — re-run $rebuild_hint" >&2
+    exit 1
+  fi
+
   set +e
   codesign_out="$(codesign -dv "$bin_path" 2>&1)"
   codesign_status=$?
