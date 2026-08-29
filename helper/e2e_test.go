@@ -29,18 +29,52 @@ func findFFmpeg(t *testing.T) string {
 	return findSystemFFmpeg(t)
 }
 
-// findSystemFFmpeg returns a full-featured ffmpeg for authoring test fixtures.
-// Fixtures need libx264, flac, srt and the matroska muxer — exactly what the
-// bundled LGPL build excludes — so this deliberately stays on Homebrew's.
-func findSystemFFmpeg(t *testing.T) string {
-	t.Helper()
-	for _, p := range []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"} {
-		if _, err := os.Stat(p); err == nil {
-			return p
+// systemFFmpegCandidates is the search list for findSystemFFmpeg, factored
+// out so the fallback-vs-fatal decision in locateSystemFFmpeg can be unit
+// tested with fake paths instead of the real filesystem.
+var systemFFmpegCandidates = []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"}
+
+// locateSystemFFmpeg is the pure decision logic behind findSystemFFmpeg: given
+// a list of candidate paths, a stat function, and whether a bundled-ffmpeg
+// gate run was requested (IINA_AIRPLAY_FFMPEG set), it decides whether to
+// return a found binary, skip the test, or fail it outright. It takes no
+// *testing.T so table-driven tests can exercise the decision directly.
+func locateSystemFFmpeg(candidates []string, stat func(string) error, gateRequested bool) (path string, skip bool, fatal string) {
+	for _, p := range candidates {
+		if err := stat(p); err == nil {
+			return p, false, ""
 		}
 	}
-	t.Skip("no local ffmpeg; skipping real-media e2e")
-	return ""
+	if gateRequested {
+		return "", false, "IINA_AIRPLAY_FFMPEG requested a bundled-ffmpeg gate run, but no full-featured system ffmpeg was found to author test fixtures (checked: " +
+			strings.Join(candidates, ", ") +
+			"). Fixtures need libx264, flac, srt and the matroska muxer, which the bundled build deliberately excludes — install Homebrew's ffmpeg (`brew install ffmpeg`) to run the gate."
+	}
+	return "", true, ""
+}
+
+// findSystemFFmpeg returns a full-featured ffmpeg for authoring test fixtures
+// — never the binary under test, findFFmpeg's job. Fixtures need libx264,
+// flac, srt and the matroska muxer — exactly what the bundled LGPL build
+// excludes — so this deliberately stays on Homebrew's ffmpeg regardless of
+// IINA_AIRPLAY_FFMPEG. When that variable is set, a gate run against the
+// bundled build was explicitly requested, so a missing system ffmpeg here is
+// a hard failure rather than a skip: skipping would let `go test` exit 0
+// without the bundled ffmpeg ever having been driven through the pipeline.
+func findSystemFFmpeg(t *testing.T) string {
+	t.Helper()
+	gateRequested := os.Getenv("IINA_AIRPLAY_FFMPEG") != ""
+	path, skip, fatal := locateSystemFFmpeg(systemFFmpegCandidates, func(p string) error {
+		_, err := os.Stat(p)
+		return err
+	}, gateRequested)
+	if fatal != "" {
+		t.Fatal(fatal)
+	}
+	if skip {
+		t.Skip("no local ffmpeg; skipping real-media e2e")
+	}
+	return path
 }
 
 // Synthesizes a small H.264 + stereo FLAC MKV — exercises video copy plus the
@@ -250,4 +284,40 @@ func TestFindFFmpegPrefersEnvOverride(t *testing.T) {
 	if got := findFFmpeg(t); got != fake {
 		t.Fatalf("findFFmpeg = %q, want the env override %q", got, fake)
 	}
+}
+
+// TestLocateSystemFFmpeg exercises the fallback-vs-fatal decision in
+// locateSystemFFmpeg directly, with fake paths, so the "gate run requested
+// but no system ffmpeg available" scenario is proven without needing to
+// uninstall Homebrew's ffmpeg (which findSystemFFmpeg would otherwise find
+// on this machine every time).
+func TestLocateSystemFFmpeg(t *testing.T) {
+	exists := func(p string) error { return nil }
+	missing := func(p string) error { return os.ErrNotExist }
+
+	t.Run("found: returns the path", func(t *testing.T) {
+		path, skip, fatal := locateSystemFFmpeg([]string{"/found/ffmpeg"}, exists, false)
+		if path != "/found/ffmpeg" || skip || fatal != "" {
+			t.Fatalf("got (%q, %v, %q), want (\"/found/ffmpeg\", false, \"\")", path, skip, fatal)
+		}
+	})
+
+	t.Run("missing, no gate requested: skip, not fatal", func(t *testing.T) {
+		path, skip, fatal := locateSystemFFmpeg([]string{"/nowhere/ffmpeg"}, missing, false)
+		if path != "" || !skip || fatal != "" {
+			t.Fatalf("got (%q, %v, %q), want (\"\", true, \"\")", path, skip, fatal)
+		}
+	})
+
+	t.Run("missing, gate requested: fatal, not skip", func(t *testing.T) {
+		path, skip, fatal := locateSystemFFmpeg([]string{"/nowhere/ffmpeg"}, missing, true)
+		if path != "" || skip || fatal == "" {
+			t.Fatalf("got (%q, %v, %q), want (\"\", false, non-empty)", path, skip, fatal)
+		}
+		for _, want := range []string{"IINA_AIRPLAY_FFMPEG", "libx264", "flac", "srt", "matroska"} {
+			if !strings.Contains(fatal, want) {
+				t.Errorf("fatal message missing %q: %s", want, fatal)
+			}
+		}
+	})
 }
