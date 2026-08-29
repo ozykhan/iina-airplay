@@ -152,6 +152,9 @@ if (typeof iina !== "undefined") {
       core.osd("AirPlay: no castable video/audio tracks");
       return;
     }
+    if (tracks.subDropped) {
+      core.osd("AirPlay: selected subtitles can't be cast (image-based or unsupported); casting without them");
+    }
     var pid = getIINAPid();
     if (!isValidPid(pid)) {
       core.osd("AirPlay: cannot determine IINA process id");
@@ -173,7 +176,7 @@ if (typeof iina !== "undefined") {
       }
       var helper = binDir + "/airplay-helper";
       var ffmpeg = binDir + "/ffmpeg";
-      utils.exec(helper, [
+      var serveArgs = [
         "serve",
         "-source", src, "-out", outDir,
         "-ffmpeg", ffmpeg,
@@ -182,7 +185,13 @@ if (typeof iina !== "undefined") {
         "-vcodec", tracks.vcodec, "-acodec", tracks.acodec,
         "-achannels", String(tracks.achannels),
         "-vmap", String(tracks.vmap), "-amap", String(tracks.amap),
-      ], undefined, function (chunk) {
+      ];
+      if (tracks.sub) {
+        if (tracks.sub.path) serveArgs.push("-subpath", tracks.sub.path);
+        else serveArgs.push("-smap", String(tracks.sub.smap));
+        serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
+      }
+      utils.exec(helper, serveArgs, undefined, function (chunk) {
         if (gen !== castGen) return;
         var parsed = parseHelperEvents(stdoutRest, chunk);
         stdoutRest = parsed.rest;
