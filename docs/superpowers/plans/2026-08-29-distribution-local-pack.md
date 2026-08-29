@@ -848,7 +848,17 @@ for rel in bin/airplay-helper bin/ffmpeg; do
   for want in x86_64 arm64; do
     grep -qw "$want" <<<"$archs" || fail "$rel is missing the $want slice (has: ${archs:-none})"
   done
-  codesign -dv "$b" >/dev/null 2>&1 || fail "$rel has no valid code signature"
+  # Two distinct checks, because they answer different questions:
+  #   --verify is the cryptographic one — it re-hashes the file and fails if
+  #     the bytes no longer match the signature. `codesign -dv` does NOT do
+  #     this: on a binary corrupted after signing it still exits 0 and still
+  #     prints Signature=adhoc (verified 2026-08-29).
+  #   -dv | grep adhoc confirms it is an AD-HOC signature specifically, which
+  #     --verify alone would not tell us.
+  codesign --verify --strict "$b" 2>/dev/null \
+    || fail "$rel fails signature verification — its bytes do not match its signature"
+  codesign -dv "$b" 2>&1 | grep -q 'Signature=adhoc' \
+    || fail "$rel is not ad-hoc signed"
 done
 
 # --- ffmpeg licensing and capabilities --------------------------------------
