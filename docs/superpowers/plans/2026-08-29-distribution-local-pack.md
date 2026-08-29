@@ -25,6 +25,15 @@ Every task's requirements implicitly include this section.
 - **Go builds:** `CGO_ENABLED=0 GOOS=darwin GOARCH=arm64|amd64`. Module path is `github.com/ozykhan/iina-airplay/helper`.
 - **`Info.json` update keys** (verified against IINA's `JavascriptPlugin.swift`): `ghRepo` is a **String** matching `^[\w-]+/[\w-]+$`; `ghVersion` is an **Int**, a monotonic counter, *not* the semver `version` string. An invalid `ghRepo` makes IINA refuse to load the plugin entirely.
 - **`iina-plugin pack <dir>`** writes `<dirname>-<version>.iinaplgz` into the **current working directory**, not next to `<dir>`. The archive is flat — `Info.json` and `bin/` sit at the archive root, with no wrapper directory — and it preserves the executable bit. (All three verified by experiment 2026-08-29.)
+- **Every script must run under bash 3.2.** `#!/usr/bin/env bash` on macOS
+  resolves to `/bin/bash`, which Apple still ships as 3.2.57 for GPLv3 reasons.
+  The trap that has already bitten this plan: in bash 3.2 a single `local`
+  statement creates *all* its names unset before assigning any of them, so
+  `local a="$1" b="$OUT/$a"` fails under `set -u` with `a: unbound variable`.
+  Split any `local` whose later name references an earlier one. Also avoid
+  bash 4+ features generally: associative arrays, `mapfile`/`readarray`,
+  `${var,,}`/`${var^^}`, and `&>>`. Herestrings (`<<<`), process substitution
+  (`< <(...)`) and `$(...)` are fine in 3.2.
 - **`build/` is gitignored. Never commit a binary.**
 - Run `make test` before every commit; it must stay green.
 
@@ -229,7 +238,13 @@ FLAGS
 }
 
 build_one() {
-  local arch="$1" minver="$2" extra="$3" dest="$OUT/$arch"
+  # Split declarations: bash 3.2 (what /bin/bash is on macOS) creates every
+  # name in a single `local` unset before assigning any, so a later name
+  # cannot reference an earlier one without tripping `set -u`.
+  local arch="$1"
+  local minver="$2"
+  local extra="$3"
+  local dest="$OUT/$arch"
   rm -rf "$dest" && mkdir -p "$dest"
   ( cd "$SRC" && make distclean >/dev/null 2>&1 || true )
   # shellcheck disable=SC2046
@@ -700,7 +715,10 @@ fails=0
 
 # Builds a minimal package; callers mutate the staging dir via the hook first.
 make_pkg() {
-  local name="$1" hook="$2" d="$TMP/$name"
+  # Split declarations — see the bash 3.2 note in Global Constraints.
+  local name="$1"
+  local hook="$2"
+  local d="$TMP/$name"
   rm -rf "$d" && mkdir -p "$d/src/bin"
   cat > "$d/src/Info.json" <<'JSON'
 {"name":"AirPlay","identifier":"dev.faruk.iina-airplay","version":"0.1.0",
