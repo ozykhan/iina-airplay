@@ -39,9 +39,18 @@ function loadPlugin(opts = {}) {
     },
     utils: {
       resolvePath: (p) => "/plugins/.data/dev.faruk.iina-airplay" + (p === "@tmp/hls" ? "/tmp/hls" : ""),
-      exec: (bin, args) => { execs.push({ bin, args }); return new Promise(() => {}); },
+      exec: (bin, args) => {
+        execs.push({ bin, args });
+        // opts.binDirLookup scripts the /bin/sh lookup that resolveBinDir runs
+        // when no bin dir is cached; everything else hangs, as before.
+        if (bin === "/bin/sh" && opts.binDirLookup) return Promise.resolve(opts.binDirLookup);
+        return new Promise(() => {});
+      },
     },
-    file: { read: () => "/plugins/dev.faruk.iina-airplay/bin", write: () => {} },
+    file: {
+      read: () => (opts.binDirLookup ? "" : "/plugins/dev.faruk.iina-airplay/bin"),
+      write: () => {},
+    },
     console: { log: () => {} },
   };
 
@@ -141,4 +150,18 @@ test("no sub flags when no sub is selected", () => {
   assert.equal(args.indexOf("-smap"), -1);
   assert.equal(args.indexOf("-subpath"), -1);
   assert.equal(args.indexOf("-sublang"), -1);
+});
+
+test("a broken install names the fix instead of leaking an exec error", async () => {
+  // Exit 3 is resolveBinDir's signal for "found the plugin, but its binaries
+  // are missing or not executable" — a hand-copied or quarantined install.
+  const p = loadPlugin({ binDirLookup: { status: 3, stdout: "" } });
+  p.clickMenu();
+  await new Promise((r) => setImmediate(r)); // let the exec promise settle
+  p.send("getState", {}); // simulate the page's poll to read the async result
+  const s = p.state();
+  assert.equal(s.phase, "error");
+  assert.match(s.msg, /reinstall/i);
+  assert.match(s.msg, /IINA/);
+  assert.equal(serves(p).length, 0, "a broken install must not spawn the helper");
 });

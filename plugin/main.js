@@ -78,12 +78,20 @@ function isValidPid(pid) {
   return typeof pid === "number" && isFinite(pid) && pid > 0;
 }
 
+// mpv's "path" is a URL whenever IINA is playing a network stream. The bundled
+// ffmpeg is built --disable-network and has no protocol handler for those, so
+// the plugin declines up front instead of letting ffmpeg fail obscurely.
+function isLocalSource(p) {
+  return !!p && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
     isValidPid: isValidPid,
+    isLocalSource: isLocalSource,
   };
 }
 
@@ -120,11 +128,20 @@ if (typeof iina !== "undefined") {
     var script =
       'for d in "$1"/*/; do' +
       '  if /usr/bin/grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
-      '    printf %s "$d"bin; exit 0; fi; done; exit 1';
+      '    if [ -x "$d"bin/airplay-helper ] && [ -x "$d"bin/ffmpeg ]; then' +
+      '      printf %s "$d"bin; exit 0;' +
+      '    fi;' +
+      '    exit 3;' +           // found the plugin, but its binaries won't run
+      '  fi;' +
+      'done; exit 1';
     utils.exec("/bin/sh", ["-c", script, "sh", pluginsDir]).then(function (r) {
       if (r.status === 0 && r.stdout) {
         file.write("@data/bindir.txt", r.stdout);
         cb(r.stdout, null);
+      } else if (r.status === 3) {
+        // Never offer to download anything — docs/distribution.md non-goals.
+        cb(null, "the bundled helper or ffmpeg is missing or not executable; " +
+                 "reinstall the plugin through IINA (Settings → Plugins → Install)");
       } else {
         cb(null, "cannot locate plugin bin directory");
       }
@@ -145,6 +162,12 @@ if (typeof iina !== "undefined") {
     var src = mpv.getString("path");
     if (!src || src.charAt(0) !== "/") {
       core.osd("AirPlay: only local files can be cast");
+      return;
+    }
+    if (!isLocalSource(src)) {
+      var streamMsg = "AirPlay can only cast local files, not network streams";
+      core.osd("AirPlay: " + streamMsg);
+      state = { phase: "error", url: null, pct: 0, msg: streamMsg };
       return;
     }
     var tracks = selectTracks(mpv.getNative("track-list") || []);

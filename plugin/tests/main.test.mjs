@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, parseHelperEvents, pluginsDirFromDataDir, isValidPid } = require("../main.js");
+const { selectTracks, parseHelperEvents, pluginsDirFromDataDir, isValidPid, isLocalSource } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -118,6 +118,19 @@ test("pluginsDirFromDataDir returns null for an unexpected shape", () => {
   assert.equal(pluginsDirFromDataDir("/Users/x/somewhere/else"), null);
   assert.equal(pluginsDirFromDataDir(""), null);
   assert.equal(pluginsDirFromDataDir(null), null);
+});
+
+test("isLocalSource accepts filesystem paths", () => {
+  assert.equal(isLocalSource("/movies/a.mkv"), true);
+  assert.equal(isLocalSource("/Volumes/Media/Show S01E01.mkv"), true);
+});
+
+test("isLocalSource rejects network streams the bundled ffmpeg cannot open", () => {
+  // The bundled ffmpeg is built --disable-network, so these have no protocol
+  // handler at all. Say so plainly rather than letting ffmpeg fail obscurely.
+  for (const url of ["http://x/y.mp4", "https://x/y.mp4", "rtsp://x/y", "ytdl://abc"]) {
+    assert.equal(isLocalSource(url), false, url);
+  }
 });
 
 test("isValidPid accepts positive finite numbers only", () => {
