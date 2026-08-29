@@ -16,14 +16,48 @@ SRT/ASS; the track selected in IINA) are carried as a WebVTT rendition the TV
 shows via its own subtitle menu. ASS styling is flattened to plain text; image
 subs (PGS/DVD) can't be cast and are dropped with a notice — burn-in is a
 possible future round. Human end-to-end acceptance at a real TV is pending (a
-person has to watch the picture and click the button). Packaged releases
-(`.iinaplgz`, pinned static ffmpeg, GitHub-release install flow) are not built
-yet — that's the next plan; see `docs/distribution.md`.
+person has to watch the picture and click the button). The package
+(`.iinaplgz`, pinned static ffmpeg, ad-hoc-signed helper) is built locally by
+`make pack` and verified by `packaging/verify.sh`; CI and the tagged GitHub
+release are not wired up yet — see `docs/distribution.md`.
+
+## Install
+
+Install **through IINA**, not by downloading the package in a browser:
+
+IINA → Settings → Plugins → Install → enter `ozykhan/iina-airplay`
+
+IINA fetches the `.iinaplgz` from the latest GitHub release and extracts it
+without applying `com.apple.quarantine`, so the bundled binaries run under
+Gatekeeper with only their ad-hoc signatures. Downloading the package in a
+browser and opening it by hand quarantines everything inside it, and the plugin
+will tell you to reinstall through IINA when that happens.
+
+On macOS 15+, grant IINA the **Local Network** permission the first time it
+casts, or the Apple TV cannot reach the stream.
+
+Everything the plugin needs ships inside the package — a pinned LGPL build of
+ffmpeg and the Go helper. There are no prerequisites and nothing is downloaded
+at runtime.
+
+### Building the package yourself
+
+```sh
+make pack       # builds ffmpeg (slow, once), the helper, packs and verifies
+```
+
+The result is `build/iina-airplay.iinaplgz`. Install it via IINA → Settings →
+Plugins → the `+` menu → Install from local package.
+
+Building ffmpeg from source needs `nasm` (see Dev quickstart below) — the
+x86_64 slice assembles hand-optimized x86 assembly with it; arm64 never
+needed it, which is why this only shows up once you build the universal
+binary.
 
 ## Dev quickstart
 
 ```sh
-brew install ffmpeg go node
+brew install ffmpeg go node nasm
 make dev        # builds the helper, symlinks brew's ffmpeg into plugin/bin,
                  # links the plugin into IINA
 ```
@@ -50,4 +84,4 @@ make test       # go test ./... in helper/, plus node --test over plugin/tests/
   (Apple TV accepts the packaged stream, picker-in-plugin-window,
   picker-in-sidebar)
 - `docs/distribution.md` — the packaging and install design for strangers'
-  machines (not built yet)
+  machines

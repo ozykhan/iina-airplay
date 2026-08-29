@@ -18,6 +18,18 @@ TARBALL_URL="https://ffmpeg.org/releases/ffmpeg-${FFMPEG_VERSION}.tar.xz"
 ARCH_MODE="universal"
 [ "${1:-}" = "--arch" ] && ARCH_MODE="${2:-universal}"
 
+# The arm64 slice never needed an assembler beyond what clang carries, so this
+# only surfaced once a universal build was first attempted: the x86_64 slice's
+# hand-optimized assembly needs nasm to assemble it, and without it configure
+# fails with "C compiler test failed" / "nasm not found or too old" twenty
+# lines into output that does not say "nasm" anywhere near the top. Check it
+# here, before any download/extract/configure work begins, so the failure
+# names the actual fix.
+if [ "$ARCH_MODE" = "universal" ] && ! command -v nasm >/dev/null 2>&1; then
+  echo "build-ffmpeg: nasm not found; brew install nasm" >&2
+  exit 1
+fi
+
 # Any change to this script — a flag, the pinned version — invalidates the
 # cached build. Hashing the script itself is the whole cache-key story.
 RECIPE_HASH="$(shasum -a 256 "${BASH_SOURCE[0]}" | cut -d' ' -f1)"

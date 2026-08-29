@@ -5,6 +5,12 @@
 > and a pinned static LGPL ffmpeg. No first-run downloads, no native code loaded
 > into IINA, no Apple Developer ID.**
 
+> **Status 2026-08-29:** the package is built locally by `make pack` and
+> verified by `packaging/verify.sh`. CI, the tagged GitHub release, and the
+> x86_64 slice actually being *executed* rather than only structurally checked
+> remain outstanding — see
+> `docs/superpowers/specs/2026-08-29-distribution-local-pack-design.md`.
+
 ## The decision, and the two designs it beat
 
 The plugin needs three things on a stranger's Mac: an ffmpeg-class remuxer, a LAN
@@ -28,8 +34,10 @@ assumed to exist (python3 ships with Xcode CLT, not macOS). Three candidates:
 3. **Bundle both: supervisor + pinned static ffmpeg CLI in the package.** What
    remains when 1 and 2 lose their signature features. Fully offline after install,
    media edge cases stay ffmpeg's problem, contributors build JS+Go trivially while
-   CI owns the ffmpeg build. Cost: a ~35 MB package — a one-time download through
-   IINA's installer, where a big file is least painful. **Chosen.**
+   CI owns the ffmpeg build. Cost: a 24.7 MB package (measured: 24,663,895 bytes,
+   containing ffmpeg 9.0.1 universal at 43.3 MB and the helper universal at
+   12.2 MB before zip compression) — a one-time download through IINA's
+   installer, where a big file is least painful. **Chosen.**
 
 ## Gatekeeper: verified, not assumed (2026-08-29)
 
@@ -65,14 +73,15 @@ uninstallable source tree). For users who cannot reach GitHub: document IINA's
 ## Package layout
 
 ```
-iina-airplay.iinaplgz            (~35 MB zipped)
+iina-airplay.iinaplgz            (24.7 MB measured: 24,663,895 bytes, zipped)
 ├── Info.json                    sidebarTab, permissions, ghRepo/ghVersion (updates)
 ├── main.js / sidebar.html / …   the plugin
 └── bin/
-    ├── airplay-helper           Go, universal, ad-hoc signed (~10 MB)
-    ├── ffmpeg                   static, universal, LGPL configure (~25 MB)
+    ├── airplay-helper           Go, universal, ad-hoc signed (12.2 MB)
+    ├── ffmpeg                   static, universal, LGPL configure (43.3 MB)
     ├── ffmpeg-LICENSE.md        LGPL notice + pinned source-tarball URL
-    └── VERSIONS                 helper + ffmpeg versions, SHA-256 of both
+    └── VERSIONS                 helper + ffmpeg versions and SHA-256 of both,
+                                  plus the SHA-256 of the ffmpeg *source* tarball
 ```
 
 `utils.exec` runs binaries from absolute paths and `@data`/`@tmp`; the plugin
@@ -110,6 +119,13 @@ encoders limited to `aac`, `eac3`, `hevc_videotoolbox`, `h264_videotoolbox`,
 compliance = ship the license notice and link the exact source tarball in
 `bin/ffmpeg-LICENSE.md` and the release notes.
 
+`--disable-autodetect` is required — without it, configure links whatever
+Homebrew libraries happen to be present on the build machine, and the binary
+only works there. Filters and decoders stay at upstream defaults (not trimmed
+the way encoders/muxers are): the `-ac 6` downmix in the pipeline auto-inserts
+an `aresample` filter, and the `hevc_videotoolbox` re-encode branch needs
+decoders for whatever codec it's re-encoding from.
+
 ## CI / release (GitHub Actions, macOS runner)
 
 1. Build ffmpeg from the pinned recipe for arm64 + x86_64, `lipo` → universal.
@@ -133,4 +149,6 @@ compliance = ship the license notice and link the exact source tarball in
 
 Homebrew/ffmpeg detection or reuse (bundling makes it dead weight), Developer ID
 signing (until macOS forces it), any runtime network access by the plugin or
-helper, and Windows/Linux anything.
+helper, and Windows/Linux anything. Also: network-protocol support in the
+bundled ffmpeg (`--disable-network` above) — network stream sources are
+declined by the plugin with a clear message rather than being fetched.
