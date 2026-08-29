@@ -941,15 +941,15 @@ Add to `plugin/tests/main.test.mjs`, extending the destructured require at the t
 
 ```javascript
 test("hasURLScheme is false for filesystem paths", () => {
-  assert.equal(isLocalSource("/movies/a.mkv"), true);
-  assert.equal(isLocalSource("/Volumes/Media/Show S01E01.mkv"), true);
+  assert.equal(hasURLScheme("/movies/a.mkv"), false);
+  assert.equal(hasURLScheme("/Volumes/Media/Show S01E01.mkv"), false);
 });
 
-test("isLocalSource rejects network streams the bundled ffmpeg cannot open", () => {
+test("hasURLScheme is true for network streams the bundled ffmpeg cannot open", () => {
   // The bundled ffmpeg is built --disable-network, so these have no protocol
   // handler at all. Say so plainly rather than letting ffmpeg fail obscurely.
   for (const url of ["http://x/y.mp4", "https://x/y.mp4", "rtsp://x/y", "ytdl://abc"]) {
-    assert.equal(isLocalSource(url), false, url);
+    assert.equal(hasURLScheme(url), true, url);
   }
 });
 ```
@@ -1012,11 +1012,29 @@ wrong, rather than the generic one. Replace the existing block with:
 ```
 
 Note the two messages are deliberately different: a network stream is a
-different problem from a relative or `file://` path, and telling a user their
-stream is "not a local file path" would send them looking in the wrong place.
-`file://` falls into the second branch — the pipeline hands the path straight
-to ffmpeg as `-i`, which wants a plain path — so it is declined, but with an
-accurate message rather than being mislabelled a network stream.
+different problem from a relative path, and telling a user their stream is "not
+a local file path" would send them looking in the wrong place.
+
+`file://` needs its own handling and must be dealt with BEFORE the
+`hasURLScheme` test, because `file` is a valid URL scheme and would otherwise
+be mislabelled a network stream. It also should not merely be declined: a
+`file://` URI names a real local file that the pipeline could cast perfectly
+well. Normalize it into a plain path instead:
+
+```javascript
+// mpv usually reports a bare filesystem path, but can hand back a file:// URI.
+// That names a local file we can cast, so strip the scheme and percent-decode
+// rather than declining it — and do this before the URL-scheme test, which
+// would otherwise call it a network stream.
+function normalizeSource(p) {
+  if (!p || p.indexOf("file://") !== 0) return p;
+  var rest = p.slice("file://".length);
+  if (rest.indexOf("localhost/") === 0) rest = rest.slice("localhost".length);
+  try { return decodeURIComponent(rest); } catch (e) { return rest; }
+}
+```
+
+Apply it immediately after reading `src`, before any of the guards.
 
 - [ ] **Step 6: Write the failing test for the broken-install message**
 
