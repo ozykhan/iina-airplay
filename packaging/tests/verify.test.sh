@@ -66,7 +66,7 @@ corrupt_signed() {
   chmod 755 "$d/bin/airplay-helper"
 }
 
-expect_fail "missing ffmpeg"           "$(make_pkg missing  drop_ffmpeg)"     "ffmpeg"
+expect_fail "missing ffmpeg"           "$(make_pkg missing  drop_ffmpeg)"     "missing from the package"
 expect_fail "non-executable helper"    "$(make_pkg noexec   unexecutable)"    "executab"
 expect_fail "malformed ghRepo"         "$(make_pkg ghrepo   bad_ghrepo)"      "ghRepo"
 expect_fail "corrupted after signing"  "$(make_pkg corrupt  corrupt_signed)"  "signature"
