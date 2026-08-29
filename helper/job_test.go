@@ -178,3 +178,69 @@ func TestRunJobStopAfterDone(t *testing.T) {
 	stop()
 	stop() // Call twice for good measure
 }
+
+func TestBuildArgsNoSubByteIdentical(t *testing.T) {
+	// Pin the exact no-subs command line: subtitle support must not disturb
+	// the proven recipe when no sub is configured (spec §2).
+	got := strings.Join(BuildArgs(baseCfg()), " ")
+	want := strings.Join([]string{
+		"-hide_banner", "-nostats", "-loglevel", "warning", "-y",
+		"-progress", "pipe:1",
+		"-i", "/movies/a.mkv",
+		"-map", "0:0", "-map", "0:1", "-sn", "-dn",
+		"-c:v", "copy", "-tag:v", "hvc1",
+		"-c:a", "eac3", "-b:a", "640k", "-ac", "6",
+		"-f", "hls", "-hls_time", "6", "-hls_playlist_type", "event",
+		"-hls_segment_type", "fmp4", "-hls_flags", "independent_segments",
+		"-hls_fmp4_init_filename", "init.mp4",
+		"-hls_segment_filename", "/tmp/out/seg_%04d.m4s",
+		"/tmp/out/index.m3u8",
+	}, " ")
+	if got != want {
+		t.Fatalf("no-subs args changed:\ngot:  %s\nwant: %s", got, want)
+	}
+}
+
+func TestBuildArgsEmbeddedSub(t *testing.T) {
+	c := baseCfg()
+	c.SubMap = "3"
+	args := BuildArgs(c)
+	argsHave(t, args, "-map", "0:3", "-dn")
+	argsHave(t, args, "-c:s", "webvtt")
+	argsHave(t, args, "-master_pl_name", "master.m3u8")
+	if slices.Contains(args, "-sn") {
+		t.Fatal("-sn must be dropped when a subtitle is mapped")
+	}
+}
+
+func TestBuildArgsExternalSub(t *testing.T) {
+	c := baseCfg()
+	c.SubPath = "/subs/en.srt"
+	args := BuildArgs(c)
+	argsHave(t, args, "-i", "/movies/a.mkv")
+	argsHave(t, args, "-i", "/subs/en.srt")
+	argsHave(t, args, "-map", "1:0", "-dn")
+	argsHave(t, args, "-c:s", "webvtt")
+	if slices.Index(args, "/subs/en.srt") < slices.Index(args, "/movies/a.mkv") {
+		t.Fatal("subtitle input must come after the media input (it must be input 1)")
+	}
+	if slices.Contains(args, "-sn") {
+		t.Fatal("-sn must be dropped when a subtitle is mapped")
+	}
+}
+
+func TestHasSubAndPlaylistName(t *testing.T) {
+	c := baseCfg()
+	if c.HasSub() || c.PlaylistName() != "index.m3u8" {
+		t.Fatalf("no-subs config: HasSub=%v playlist=%q", c.HasSub(), c.PlaylistName())
+	}
+	c.SubMap = "0" // ff-index 0 is a valid stream — string zero value keeps it unambiguous
+	if !c.HasSub() || c.PlaylistName() != "master.m3u8" {
+		t.Fatalf("embedded-sub config: HasSub=%v playlist=%q", c.HasSub(), c.PlaylistName())
+	}
+	c = baseCfg()
+	c.SubPath = "/subs/en.srt"
+	if !c.HasSub() || c.PlaylistName() != "master.m3u8" {
+		t.Fatalf("external-sub config: HasSub=%v playlist=%q", c.HasSub(), c.PlaylistName())
+	}
+}

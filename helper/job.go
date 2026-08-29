@@ -21,7 +21,25 @@ type JobConfig struct {
 	AChannels int
 	VMap      int
 	AMap      int
-	Duration  float64
+	// Subtitles are optional; zero values mean "no subtitle track". SubMap
+	// holds the ff-index as a string so the zero value can't be mistaken
+	// for stream 0. SubPath (external file, fed as input 1) wins over SubMap.
+	SubPath  string
+	SubMap   string
+	SubLang  string
+	SubName  string
+	Duration float64
+}
+
+func (c JobConfig) HasSub() bool { return c.SubPath != "" || c.SubMap != "" }
+
+// PlaylistName is the playlist the TV is handed: ffmpeg's master playlist
+// when a subtitle rendition exists, the media playlist alone otherwise.
+func (c JobConfig) PlaylistName() string {
+	if c.HasSub() {
+		return "master.m3u8"
+	}
+	return "index.m3u8"
 }
 
 // BuildArgs ports the proven serve.sh recipe (docs/prototype.md) to a live
@@ -31,9 +49,21 @@ func BuildArgs(c JobConfig) []string {
 		"-hide_banner", "-nostats", "-loglevel", "warning", "-y",
 		"-progress", "pipe:1",
 		"-i", c.Source,
-		"-map", "0:" + strconv.Itoa(c.VMap),
-		"-map", "0:" + strconv.Itoa(c.AMap),
-		"-sn", "-dn",
+	}
+	if c.SubPath != "" {
+		args = append(args, "-i", c.SubPath)
+	}
+	args = append(args,
+		"-map", "0:"+strconv.Itoa(c.VMap),
+		"-map", "0:"+strconv.Itoa(c.AMap),
+	)
+	switch {
+	case c.SubPath != "":
+		args = append(args, "-map", "1:0", "-dn")
+	case c.SubMap != "":
+		args = append(args, "-map", "0:"+c.SubMap, "-dn")
+	default:
+		args = append(args, "-sn", "-dn")
 	}
 	switch c.VCodec {
 	case "h264":
@@ -53,13 +83,19 @@ func BuildArgs(c JobConfig) []string {
 			args = append(args, "-c:a", "aac", "-b:a", "256k")
 		}
 	}
-	return append(args,
+	if c.HasSub() {
+		args = append(args, "-c:s", "webvtt")
+	}
+	args = append(args,
 		"-f", "hls", "-hls_time", "6", "-hls_playlist_type", "event",
 		"-hls_segment_type", "fmp4", "-hls_flags", "independent_segments",
 		"-hls_fmp4_init_filename", "init.mp4",
 		"-hls_segment_filename", filepath.Join(c.OutDir, "seg_%04d.m4s"),
-		filepath.Join(c.OutDir, "index.m3u8"),
 	)
+	if c.HasSub() {
+		args = append(args, "-master_pl_name", "master.m3u8")
+	}
+	return append(args, filepath.Join(c.OutDir, "index.m3u8"))
 }
 
 func ParseProgressValue(line string) (string, string, bool) {
