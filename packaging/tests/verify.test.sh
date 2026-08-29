@@ -191,6 +191,34 @@ else
   echo "ok: a stale main.js is caught even when sidebar.html is absent from the source tree"
 fi
 
+# --- a native-x86_64 host runs no Rosetta pass --------------------------------
+# On Intel the x86_64 slice IS the native slice, so a second pass through
+# `arch -x86_64` re-runs identical assertions under a different label and reads
+# in the log as coverage it is not. VERIFY_HOST_ARCH exists so this can be
+# exercised from an arm64 machine.
+#
+# The fixture's stub ffmpeg makes the NATIVE pass fail at the encoder
+# assertions, and that is deliberate: verify.sh must announce its slice plan
+# BEFORE running any slice check, or a failing native pass would exit first and
+# leave no record of whether x86_64 was covered.
+arch_pkg="$(make_pkg archnote fake_ffmpeg_binary)"
+arch_out="$(VERIFY_SRC_ROOT="$DUMMY_SRC_ROOT" VERIFY_HOST_ARCH=x86_64 "$VERIFY" "$arch_pkg" 2>&1)"
+if grep -q 'skipping the redundant Rosetta pass' <<<"$arch_out"; then
+  echo "ok: native-x86_64 host announces that it skips the Rosetta pass"
+else
+  echo "FAIL: native-x86_64 host — verify.sh did not announce skipping the Rosetta pass:"
+  echo "$arch_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+fi
+# The native pass labels itself "x86_64 (native)"; a separate Rosetta pass
+# labels itself "x86_64". Finding the bare label means the second pass ran.
+if grep -q '(x86_64 slice)' <<<"$arch_out"; then
+  echo "FAIL: native-x86_64 host — verify.sh still ran a separate x86_64 (Rosetta) pass"
+  fails=$((fails + 1))
+else
+  echo "ok: native-x86_64 host runs no separate Rosetta pass"
+fi
+
 # --- positive case: a real, freshly-packed .iinaplgz must verify OK ----------
 # All the fixtures above prove verify.sh REJECTS broken packages; none of them
 # prove it ACCEPTS a good one — a regression that made verify.sh always fail
