@@ -91,7 +91,7 @@ func runServe(argv []string) {
 	}
 	defer os.Remove(pidfile)
 
-	port, shutdown, err := StartServer(c.OutDir)
+	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang)
 	if err != nil {
 		fail(err.Error())
 	}
