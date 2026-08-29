@@ -50,6 +50,10 @@ func runServe(argv []string) {
 	fs.IntVar(&c.AChannels, "achannels", 2, "audio channel count")
 	fs.IntVar(&c.VMap, "vmap", 0, "video stream ff-index")
 	fs.IntVar(&c.AMap, "amap", 1, "audio stream ff-index")
+	fs.StringVar(&c.SubMap, "smap", "", "embedded subtitle stream ff-index (empty = no subtitles)")
+	fs.StringVar(&c.SubPath, "subpath", "", "external subtitle file (used as input 1; overrides -smap)")
+	fs.StringVar(&c.SubLang, "sublang", "", "subtitle language tag for the HLS rendition")
+	fs.StringVar(&c.SubName, "subname", "", "subtitle display name for the HLS rendition")
 	fs.Parse(argv)
 
 	// pidfile is set once -out is known to be non-empty (right after the
@@ -80,7 +84,7 @@ func runServe(argv []string) {
 	if err := TakeOver(pidfile); err != nil {
 		fail("stale instance: " + err.Error())
 	}
-	for _, pat := range []string{"index.m3u8", "init.mp4", "seg_*.m4s"} {
+	for _, pat := range []string{"index.m3u8", "master.m3u8", "*_vtt.m3u8", "*.vtt", "init.mp4", "seg_*.m4s"} {
 		matches, _ := filepath.Glob(filepath.Join(c.OutDir, pat))
 		for _, m := range matches {
 			os.Remove(m)
@@ -112,8 +116,22 @@ func runServe(argv []string) {
 	sigs := make(chan os.Signal, 1)
 	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
 
-	// The TV can start pulling as soon as the event playlist exists.
-	playlist := filepath.Join(c.OutDir, "index.m3u8")
+	// The TV can start pulling as soon as the advertised playlist exists.
+	// With subs that's ffmpeg's master playlist — but the variant playlist
+	// it points at must exist too before the URL is usable.
+	playlistName := c.PlaylistName()
+	readyURL := fmt.Sprintf("http://%s:%d/%s", ip, port, playlistName)
+	playlistReady := func() bool {
+		if _, err := os.Stat(filepath.Join(c.OutDir, playlistName)); err != nil {
+			return false
+		}
+		if c.HasSub() {
+			if _, err := os.Stat(filepath.Join(c.OutDir, "index.m3u8")); err != nil {
+				return false
+			}
+		}
+		return true
+	}
 	readyDeadline := time.Now().Add(120 * time.Second)
 	readyTick := time.NewTicker(200 * time.Millisecond)
 	defer readyTick.Stop()
@@ -122,10 +140,8 @@ func runServe(argv []string) {
 		select {
 		case <-readyTick.C:
 			if !ready {
-				if _, err := os.Stat(playlist); err == nil {
-					Emit(os.Stdout, "ready", map[string]any{
-						"url": fmt.Sprintf("http://%s:%d/index.m3u8", ip, port),
-					})
+				if playlistReady() {
+					Emit(os.Stdout, "ready", map[string]any{"url": readyURL})
 					ready = true
 					readyTick.Stop()
 				} else if time.Now().After(readyDeadline) {
@@ -139,10 +155,8 @@ func runServe(argv []string) {
 			}
 			if !ready {
 				// Job finished before the poll noticed the playlist (tiny file).
-				if _, serr := os.Stat(playlist); serr == nil {
-					Emit(os.Stdout, "ready", map[string]any{
-						"url": fmt.Sprintf("http://%s:%d/index.m3u8", ip, port),
-					})
+				if playlistReady() {
+					Emit(os.Stdout, "ready", map[string]any{"url": readyURL})
 					ready = true
 					readyTick.Stop()
 				} else {
