@@ -15,11 +15,12 @@ Go helper (`helper/`), full test suite. Text subtitles (embedded or external
 SRT/ASS; the track selected in IINA) are carried as a WebVTT rendition the TV
 shows via its own subtitle menu. ASS styling is flattened to plain text; image
 subs (PGS/DVD) can't be cast and are dropped with a notice — burn-in is a
-possible future round. Human end-to-end acceptance at a real TV is pending (a
-person has to watch the picture and click the button). The package
-(`.iinaplgz`, pinned static ffmpeg, ad-hoc-signed helper) is built locally by
-`make pack` and verified by `packaging/verify.sh`; CI and the tagged GitHub
-release are not wired up yet — see `docs/distribution.md`.
+possible future round. The package (`.iinaplgz`, pinned static ffmpeg,
+ad-hoc-signed helper) is built locally by `make pack`, verified by
+`packaging/verify.sh`, and has been **installed through IINA and cast to a real
+Apple TV** (2026-08-29) — so the Gatekeeper assumption the whole design rests on
+holds in practice, not just on paper. CI and the tagged GitHub release are not
+wired up yet — see `docs/distribution.md`.
 
 ## Install
 

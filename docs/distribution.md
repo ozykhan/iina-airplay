@@ -8,7 +8,14 @@
 > **Status 2026-08-29:** the package is built locally by `make pack` and
 > verified by `packaging/verify.sh`, which now runs its licensing and
 > capability assertions against both the arm64 and (via Rosetta) x86_64
-> slices. CI and the tagged GitHub release remain outstanding — see
+> slices. **A packed `.iinaplgz` has been installed through IINA's own
+> installer and cast to a real Apple TV**, confirming the central Gatekeeper
+> finding below in practice: binaries inside an IINA-installed package run on
+> their ad-hoc signatures alone, with no notarization.
+>
+> Still outstanding: CI, the tagged GitHub release, and executing the x86_64
+> slice on an actual Intel Mac (it is verified structurally and under Rosetta,
+> but no Intel hardware has run it). See
 > `docs/superpowers/specs/2026-08-29-distribution-local-pack-design.md`.
 
 ## The decision, and the two designs it beat
