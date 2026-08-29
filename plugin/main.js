@@ -81,8 +81,8 @@ function isValidPid(pid) {
 // mpv's "path" is a URL whenever IINA is playing a network stream. The bundled
 // ffmpeg is built --disable-network and has no protocol handler for those, so
 // the plugin declines up front instead of letting ffmpeg fail obscurely.
-function isLocalSource(p) {
-  return !!p && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
+function hasURLScheme(p) {
+  return !!p && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
 }
 
 if (typeof module !== "undefined") {
@@ -91,7 +91,7 @@ if (typeof module !== "undefined") {
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
     isValidPid: isValidPid,
-    isLocalSource: isLocalSource,
+    hasURLScheme: hasURLScheme,
   };
 }
 
@@ -160,14 +160,26 @@ if (typeof iina !== "undefined") {
   function startCast() {
     if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
     var src = mpv.getString("path");
-    if (!src || src.charAt(0) !== "/") {
-      core.osd("AirPlay: only local files can be cast");
+    if (!src) {
+      core.osd("AirPlay: nothing is playing");
       return;
     }
-    if (!isLocalSource(src)) {
+    if (hasURLScheme(src)) {
+      // The bundled ffmpeg is built --disable-network and has no protocol
+      // handler for these at all, so say so plainly rather than letting
+      // ffmpeg fail obscurely.
       var streamMsg = "AirPlay can only cast local files, not network streams";
       core.osd("AirPlay: " + streamMsg);
       state = { phase: "error", url: null, pct: 0, msg: streamMsg };
+      return;
+    }
+    if (src.charAt(0) !== "/") {
+      // Covers relative paths and file:// URIs alike: the pipeline hands src
+      // straight to ffmpeg as -i, which wants a plain absolute path, not a
+      // URI. Deliberately not folded into the URL-scheme branch above — a
+      // file:// path is a local-path problem, not a network-stream one, and
+      // deserves the accurate message rather than being mislabelled.
+      core.osd("AirPlay: AirPlay needs a local file path");
       return;
     }
     var tracks = selectTracks(mpv.getNative("track-list") || []);

@@ -23,7 +23,7 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => {} },
     mpv: {
-      getString: (k) => (k === "path" ? "/movies/a.mkv" : null),
+      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv") : null),
       getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120 : 0),
       getNative: () => trackList,
     },
@@ -164,4 +164,19 @@ test("a broken install names the fix instead of leaking an exec error", async ()
   assert.match(s.msg, /reinstall/i);
   assert.match(s.msg, /IINA/);
   assert.equal(serves(p).length, 0, "a broken install must not spawn the helper");
+});
+
+test("a network stream is declined with the stream-specific message, not silently absolute-path-rejected", () => {
+  const p = loadPlugin({ path: "http://192.168.1.5:8080/video.mp4" });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /network stream/i.test(m)), "expected an OSD naming network streams");
+  assert.equal(serves(p).length, 0, "a network stream must not spawn the helper");
+});
+
+test("a relative path gets the local-file-path message, not the network-stream one", () => {
+  const p = loadPlugin({ path: "movie.mkv" });
+  p.clickMenu();
+  assert.ok(p.osd.some(m => /local file path/i.test(m)), "expected an OSD naming the local-file-path problem");
+  assert.ok(!p.osd.some(m => /network stream/i.test(m)), "a relative path is not a network stream");
+  assert.equal(serves(p).length, 0, "a relative path must not spawn the helper");
 });
