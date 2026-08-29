@@ -7,24 +7,81 @@ STAGE="$ROOT/build/stage/iina-airplay"
 FFMPEG="$ROOT/build/ffmpeg/ffmpeg"
 FFVERSION="$ROOT/build/ffmpeg/VERSION"
 HELPER="$ROOT/build/helper/airplay-helper"
+PLUGIN_INFO="$ROOT/plugin/Info.json"
+PLUGIN_MAIN="$ROOT/plugin/main.js"
+PLUGIN_SIDEBAR="$ROOT/plugin/sidebar.html"
 IINA_PLUGIN="${IINA_PLUGIN:-/Applications/IINA.app/Contents/MacOS/iina-plugin}"
 
 for f in "$FFMPEG" "$FFVERSION" "$HELPER"; do
   [ -f "$f" ] || { echo "pack: missing $f — run build-ffmpeg.sh and build-helper.sh first" >&2; exit 1; }
 done
 
-# shellcheck disable=SC1090
+for f in "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR"; do
+  [ -f "$f" ] || { echo "pack: missing $f — the plugin source tree is incomplete" >&2; exit 1; }
+done
+
+[ -x "$IINA_PLUGIN" ] || { echo "pack: IINA_PLUGIN ($IINA_PLUGIN) not found or not executable — install IINA or set IINA_PLUGIN to the iina-plugin CLI path" >&2; exit 1; }
+
+# A binary that merely exists is not a binary a user's Mac will run: IINA's
+# installer applies no com.apple.quarantine, so the ad-hoc signature is the
+# only Gatekeeper gate, and a thin (single-arch) binary breaks half of all
+# Macs outright. Verify both properties before anything gets staged.
+verify_binary() {
+  bin_label="$1"
+  bin_path="$2"
+  rebuild_hint="$3"
+
+  set +e
+  codesign_out="$(codesign -dv "$bin_path" 2>&1)"
+  codesign_status=$?
+  set -e
+  if [ "$codesign_status" -ne 0 ] || ! printf '%s\n' "$codesign_out" | grep -q '^Signature=adhoc$'; then
+    echo "pack: $bin_label ($bin_path) is not ad-hoc signed — re-run $rebuild_hint" >&2
+    exit 1
+  fi
+
+  set +e
+  archs="$(lipo -archs "$bin_path" 2>&1)"
+  lipo_status=$?
+  set -e
+  if [ "$lipo_status" -ne 0 ]; then
+    echo "pack: $bin_label ($bin_path) — lipo could not read its architectures — re-run $rebuild_hint" >&2
+    exit 1
+  fi
+  case " $archs " in
+    *' x86_64 '*) ;;
+    *) echo "pack: $bin_label ($bin_path) is missing the x86_64 slice (has: $archs) — re-run $rebuild_hint" >&2; exit 1 ;;
+  esac
+  case " $archs " in
+    *' arm64 '*) ;;
+    *) echo "pack: $bin_label ($bin_path) is missing the arm64 slice (has: $archs) — re-run $rebuild_hint" >&2; exit 1 ;;
+  esac
+}
+
+verify_binary "ffmpeg" "$FFMPEG" "build-ffmpeg.sh"
+verify_binary "airplay-helper" "$HELPER" "build-helper.sh"
+
 ffmpeg_version="$(grep '^ffmpeg_version=' "$FFVERSION" | cut -d= -f2-)"
 source_sha256="$(grep '^source_sha256=' "$FFVERSION" | cut -d= -f2-)"
 source_url="$(grep '^source_url=' "$FFVERSION" | cut -d= -f2-)"
 
 rm -rf "$ROOT/build/stage" && mkdir -p "$STAGE/bin"
-cp "$ROOT/plugin/Info.json" "$ROOT/plugin/main.js" "$ROOT/plugin/sidebar.html" "$STAGE/"
+cp "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$STAGE/"
 cp "$FFMPEG" "$STAGE/bin/ffmpeg"
 cp "$HELPER" "$STAGE/bin/airplay-helper"
 chmod 755 "$STAGE/bin/ffmpeg" "$STAGE/bin/airplay-helper"
 
 helper_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
+
+# Name the exact revision this binary's build recipe came from — the LGPL
+# compliance pointer below is worthless once build-ffmpeg.sh changes if it
+# doesn't say which version of the script it means. Degrade gracefully (no
+# git, or no commits yet) rather than aborting the pack over a doc detail.
+if commit_sha="$(git -C "$ROOT" rev-parse HEAD 2>/dev/null)" && [ -n "$commit_sha" ]; then
+  commit_note=" at commit \`$commit_sha\`"
+else
+  commit_note=" (commit unknown — git unavailable or repository has no commits)"
+fi
 
 cat > "$STAGE/bin/VERSIONS" <<EOF
 helper_version=$helper_version
@@ -44,7 +101,7 @@ and \`--enable-gpl\` was never passed.
 
 - Upstream source: $source_url
 - Source SHA-256: $source_sha256
-- Build recipe: \`packaging/build-ffmpeg.sh\` in the iina-airplay repository,
+- Build recipe: \`packaging/build-ffmpeg.sh\` in the iina-airplay repository$commit_note,
   which contains the complete configure line used to produce this binary.
 
 The LGPL text is available at https://www.gnu.org/licenses/lgpl-2.1.html.

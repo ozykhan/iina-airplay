@@ -18,8 +18,9 @@ for arch in arm64 amd64; do
 done
 
 lipo -create "$OUT/airplay-helper-arm64" "$OUT/airplay-helper-amd64" \
-     -output "$OUT/airplay-helper"
-codesign --force --sign - "$OUT/airplay-helper"
+     -output "$OUT/airplay-helper.unsigned"
+codesign --force --sign - "$OUT/airplay-helper.unsigned"
+mv "$OUT/airplay-helper.unsigned" "$OUT/airplay-helper"
 rm -f "$OUT/airplay-helper-arm64" "$OUT/airplay-helper-amd64"
 
 echo "build-helper: wrote $OUT/airplay-helper"
