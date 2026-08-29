@@ -933,14 +933,14 @@ The second falls out of `--disable-network`. `plugin/main.js` passes `mpv.getStr
 
 **Interfaces:**
 - Consumes: nothing from earlier tasks.
-- Produces: `isLocalSource(path) -> boolean`, exported from `main.js` alongside the existing four exports.
+- Produces: `hasURLScheme(path) -> boolean`, exported from `main.js` alongside the existing four exports.
 
 - [ ] **Step 1: Write the failing test for the source guard**
 
 Add to `plugin/tests/main.test.mjs`, extending the destructured require at the top to include `isLocalSource`:
 
 ```javascript
-test("isLocalSource accepts filesystem paths", () => {
+test("hasURLScheme is false for filesystem paths", () => {
   assert.equal(isLocalSource("/movies/a.mkv"), true);
   assert.equal(isLocalSource("/Volumes/Media/Show S01E01.mkv"), true);
 });
@@ -967,12 +967,16 @@ Add near the other pure helpers in `plugin/main.js`, above the `module.exports` 
 // mpv's "path" is a URL whenever IINA is playing a network stream. The bundled
 // ffmpeg is built --disable-network and has no protocol handler for those, so
 // the plugin declines up front instead of letting ffmpeg fail obscurely.
-function isLocalSource(p) {
-  return !!p && !/^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
+function hasURLScheme(p) {
+  return !!p && /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\//.test(p);
 }
 ```
 
-and add `isLocalSource: isLocalSource,` to `module.exports`.
+Named for what it detects rather than for a conclusion, because "is this a
+URL" and "can we cast this" are different questions — `file://` is a URL the
+pipeline still cannot use.
+
+and add `hasURLScheme: hasURLScheme,` to `module.exports`.
 
 - [ ] **Step 4: Run the test to verify it passes**
 
@@ -981,16 +985,38 @@ Expected: PASS.
 
 - [ ] **Step 5: Wire the guard into startCast**
 
-In `plugin/main.js`, inside `startCast`, immediately after `var src = mpv.getString("path");` and its existing empty-check, add:
+`startCast` already contains `if (!src || src.charAt(0) !== "/")`, which returns
+on anything that is not an absolute path — including every URL. So a guard added
+*after* it can never fire. The new check must therefore come **before** that
+test, and its job is to give a URL source a message that says what is actually
+wrong, rather than the generic one. Replace the existing block with:
 
 ```javascript
-    if (!isLocalSource(src)) {
+    if (!src) {
+      core.osd("AirPlay: nothing is playing");
+      return;
+    }
+    if (hasURLScheme(src)) {
+      // The bundled ffmpeg is built --disable-network and has no protocol
+      // handler for these at all, so say so plainly rather than letting
+      // ffmpeg fail obscurely.
       var streamMsg = "AirPlay can only cast local files, not network streams";
       core.osd("AirPlay: " + streamMsg);
       state = { phase: "error", url: null, pct: 0, msg: streamMsg };
       return;
     }
+    if (src.charAt(0) !== "/") {
+      core.osd("AirPlay: AirPlay needs a local file path");
+      return;
+    }
 ```
+
+Note the two messages are deliberately different: a network stream is a
+different problem from a relative or `file://` path, and telling a user their
+stream is "not a local file path" would send them looking in the wrong place.
+`file://` falls into the second branch — the pipeline hands the path straight
+to ffmpeg as `-i`, which wants a plain path — so it is declined, but with an
+accurate message rather than being mislabelled a network stream.
 
 - [ ] **Step 6: Write the failing test for the broken-install message**
 
