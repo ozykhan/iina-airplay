@@ -767,12 +767,15 @@ expect_fail() {
 noop() { :; }
 drop_ffmpeg()    { rm -f "$1/bin/ffmpeg"; }
 unexecutable()   { chmod 644 "$1/bin/airplay-helper"; }
-quarantine()     { xattr -w com.apple.quarantine "0081;0;test;" "$1/bin/ffmpeg"; }
+# Quarantine is applied to the built package file, not to a staged input,
+# because zip does not carry xattrs into the archive.
 bad_ghrepo()     { /usr/bin/sed -i '' 's|"ozykhan/iina-airplay"|"not a slug!"|' "$1/Info.json"; }
 
 expect_fail "missing ffmpeg"        "$(make_pkg missing  drop_ffmpeg)"  "ffmpeg"
 expect_fail "non-executable helper" "$(make_pkg noexec   unexecutable)" "executab"
-expect_fail "quarantined binary"    "$(make_pkg quar     quarantine)"   "quarantine"
+quar_pkg="$(make_pkg quar noop)"
+xattr -w com.apple.quarantine "0081;0;test;" "$quar_pkg"
+expect_fail "quarantined package"   "$quar_pkg"                    "quarantine"
 expect_fail "malformed ghRepo"      "$(make_pkg ghrepo   bad_ghrepo)"   "ghRepo"
 
 if [ "$fails" -ne 0 ]; then
@@ -830,14 +833,18 @@ if not isinstance(info["ghVersion"], int) or isinstance(info["ghVersion"], bool)
 PY
 
 # --- quarantine -------------------------------------------------------------
-# Cheap, and ahead of the binary checks so a quarantined package is reported as
-# quarantined rather than as some downstream symptom. IINA's installer applies
-# no quarantine, so anything here means the package was assembled from
-# already-quarantined inputs.
-while IFS= read -r f; do
-  xattr "$f" 2>/dev/null | grep -q 'com.apple.quarantine' \
-    && fail "com.apple.quarantine is set on ${f#$TMP/}"
-done < <(find "$TMP" -type f)
+# Checked on the PACKAGE FILE, never on the extracted tree: zip/unzip do not
+# carry extended attributes across, so scanning extracted files for quarantine
+# could never fail — a vacuous check in a script whose whole job is to not be
+# vacuous (verified 2026-08-29). Quarantine lands on the downloaded .iinaplgz,
+# which is the artifact worth inspecting. Capture first, then grep: piping
+# xattr straight into `grep -q` can SIGPIPE the writer under `pipefail`.
+pkg_xattrs="$(xattr "$PKG" 2>/dev/null || true)"
+case "$pkg_xattrs" in
+  *com.apple.quarantine*)
+    fail "com.apple.quarantine is set on $PKG — it was downloaded by a browser
+rather than installed through IINA; binaries inside will be Gatekeeper-blocked" ;;
+esac
 
 # --- binaries: presence, mode, architectures, signature ---------------------
 for rel in bin/airplay-helper bin/ffmpeg; do
