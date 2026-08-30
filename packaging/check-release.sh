@@ -54,8 +54,8 @@ ghversion="$(sed -n 2p <<<"$info_fields")"
 [ "$TAG" = "v$version" ] \
   || fail "tag $TAG does not match Info.json version $version — expected tag v$version"
 
-# A shallow clone truncates history in exactly the way that makes the
-# previous-tag lookup below come back empty whether or not a previous tag
+# A shallow clone arrives without the tag list, in exactly the way that makes
+# the previous-tag lookup below come back empty whether or not a previous tag
 # actually exists — the empty result is ambiguous, and letting it fall
 # through unchecked resolves that ambiguity in the dangerous direction: a
 # forgotten ghVersion bump on a truncated checkout would sail through as if
@@ -65,17 +65,33 @@ if ! is_shallow="$(git -C "$ROOT" rev-parse --is-shallow-repository 2>&1)"; then
   fail "cannot determine whether $ROOT has full git history: $is_shallow"
 fi
 [ "$is_shallow" = "false" ] \
-  || fail "checkout has truncated history (shallow clone) — the ghVersion monotonicity check needs full history with tags; re-run actions/checkout with fetch-depth: 0"
+  || fail "checkout has truncated history (shallow clone) — the ghVersion monotonicity check needs the full tag list; re-run actions/checkout with fetch-depth: 0"
 
-# --abbrev=0 on the tag's PARENT gives the nearest tag strictly before this
-# one. Requires unshallowed history with tags: actions/checkout must run with
-# fetch-depth: 0, or this finds nothing and the monotonicity check is skipped
-# exactly when it is needed.
-prev="$(git -C "$ROOT" describe --tags --abbrev=0 "$TAG^" 2>/dev/null || true)"
+# The highest release tag that exists, rather than the nearest one reachable
+# from this commit. Reachability is the wrong question here: the release
+# sequence tags the release BRANCH (so master's beacon never announces a
+# version whose asset is not published yet — see docs/releasing.md), and
+# squash-merging that branch puts an equivalent commit on master at a
+# different sha. The tagged commit therefore never enters master's history,
+# and `git describe` on the next release walks straight past it to the release
+# before last. That miss fails OPEN — it compares against an older, lower
+# ghVersion and waves a forgotten bump through — which is the one direction
+# this gate must never fail.
+#
+# -v:refname sorts version-aware, so v0.10.0 outranks v0.9.0; a lexical sort
+# would invert that and silently compare against the wrong release. grep -Fxv
+# drops $TAG itself when it is already created, and is a harmless no-op when
+# it is not — so this works both in CI (tag exists) and when a maintainer
+# checks the bump locally before pushing anything (tag does not).
+prev="$(git -C "$ROOT" tag --sort=-v:refname --list 'v*' 2>/dev/null | grep -Fxv "$TAG" | head -n1)"
 
 if [ -z "$prev" ]; then
   echo "check-release: no tag before $TAG; skipping the ghVersion monotonicity check (first release)"
 else
+  # Read the previous tag's manifest out of git rather than the working tree:
+  # under the branch-tagging sequence the previous tag may not be an ancestor
+  # of anything checked out here.
+  #
   # Info.json moved from plugin/ to the repository root, so the previous tag's
   # copy may be at either path: v0.1.0 and v0.2.0 predate the move, everything
   # from v0.3.0 on does not. Try the root first — it is the authoritative

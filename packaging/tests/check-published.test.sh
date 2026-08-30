@@ -35,12 +35,15 @@ JSON
   echo "$d"
 }
 
+# RELEASE_ONLY, when set, is passed through as an extra argument, so the same
+# fixtures and the same expect_* helpers drive both modes.
+RELEASE_ONLY=""
 run_check() {
   local d="$1" tag="$2"
   CHECK_PUBLISHED_ROOT="$d/local" \
   CHECK_PUBLISHED_API_BASE="file://$d/api" \
   CHECK_PUBLISHED_RAW_BASE="file://$d/raw" \
-    "$CHECK" "$tag" 2>&1
+    "$CHECK" ${RELEASE_ONLY:+"$RELEASE_ONLY"} "$tag" 2>&1
 }
 
 expect_ok() {
@@ -110,6 +113,69 @@ expect_fail "master's manifest was never bumped" "$behind" v0.2.0 "0.1.0"
 strver="$(make_endpoints strver "$GOOD_LATEST" \
   '{"name":"AirPlay","version":"0.2.0","ghRepo":"ozykhan/iina-airplay","ghVersion":"2","entry":"main.js"}')"
 expect_fail "ghVersion on master is a string" "$strver" v0.2.0 "integer"
+
+# --- --release-only: the half that must be true before the bump is merged -----
+# The release sequence publishes the release BEFORE the bump lands on master, so
+# that master's beacon never announces a version whose asset is not up yet. That
+# leaves a deliberate intermediate state — release live, master still on the old
+# version — in which the full two-sided gate is SUPPOSED to fail. --release-only
+# is what gates the irreversible step (merging the bump) in that state.
+RELEASE_ONLY="--release-only"
+
+# The step-6 state itself: the same fixture the full gate rejects above.
+expect_ok "--release-only passes while master's manifest is still behind" "$behind" v0.2.0
+
+# Proves the raw fetch is SKIPPED, not fetched and ignored. Fetching a manifest
+# whose result is discarded invites someone to later "fix" the discrepancy it
+# prints, which would reintroduce the coupling this flag exists to break.
+expect_ok "--release-only passes with no manifest on master at all" "$missing" v0.2.0
+
+# The install half must still be gated exactly as hard.
+expect_fail "--release-only still rejects a stale releases/latest" "$stale" v0.2.0 "latest"
+expect_fail "--release-only still rejects a pre-release" "$pre" v0.2.0 "pre-release"
+expect_fail "--release-only still rejects a missing asset" "$noasset" v0.2.0 "iinaplgz"
+expect_fail "--release-only still rejects two .iinaplgz assets" "$two" v0.2.0 "exactly one"
+
+# The success line must not be mistakable for the full gate — this flag is run
+# mid-sequence, and someone reading a bare "OK" could take it for step 8.
+relonly_out="$(run_check "$behind" v0.2.0)"
+if grep -q "NOT checked" <<<"$relonly_out"; then
+  echo "ok: --release-only says master's manifest was not checked"
+else
+  echo "FAIL: --release-only — success line does not say master was unchecked:"
+  echo "$relonly_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+fi
+
+RELEASE_ONLY=""
+
+# The flag is accepted after the tag as well as before it.
+after_out="$(CHECK_PUBLISHED_ROOT="$behind/local" \
+  CHECK_PUBLISHED_API_BASE="file://$behind/api" \
+  CHECK_PUBLISHED_RAW_BASE="file://$behind/raw" \
+  "$CHECK" v0.2.0 --release-only 2>&1)"
+if [ $? -eq 0 ]; then
+  echo "ok: --release-only is accepted after the tag"
+else
+  echo "FAIL: --release-only after the tag — expected exit 0:"
+  echo "$after_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+fi
+
+# An unknown flag must be an error, never mistaken for a tag: silently treating
+# --relase-only as the tag would compare it against releases/latest, fail with a
+# tag-mismatch message, and send the reader hunting the wrong problem.
+typo_out="$(CHECK_PUBLISHED_ROOT="$good/local" \
+  CHECK_PUBLISHED_API_BASE="file://$good/api" \
+  CHECK_PUBLISHED_RAW_BASE="file://$good/raw" \
+  "$CHECK" --relase-only v0.2.0 2>&1)"
+if [ $? -ne 0 ] && grep -qi "unknown option" <<<"$typo_out"; then
+  echo "ok: an unknown flag is rejected as a flag, not treated as a tag"
+else
+  echo "FAIL: unknown flag — expected a non-zero exit naming the unknown option:"
+  echo "$typo_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+fi
 
 # --- usage --------------------------------------------------------------------
 noarg_out="$(CHECK_PUBLISHED_ROOT="$good/local" "$CHECK" 2>&1)"

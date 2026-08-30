@@ -23,8 +23,26 @@ API_BASE="${CHECK_PUBLISHED_API_BASE:-https://api.github.com}"
 RAW_BASE="${CHECK_PUBLISHED_RAW_BASE:-https://raw.githubusercontent.com}"
 INFO="$ROOT/Info.json"
 
-TAG="${1:-}"
-[ -n "$TAG" ] || { echo "check-published: usage: check-published.sh <tag>" >&2; exit 2; }
+# --release-only gates the INSTALL half alone. The release sequence publishes
+# the release before the bump lands on master, so that master's beacon never
+# announces a version whose asset is not up yet — which leaves a deliberate
+# window in which the update half is SUPPOSED to disagree. This flag is what
+# gates the irreversible step in that window: merging the bump. Run the gate
+# without it afterwards; that is still the check that says the release is done.
+RELEASE_ONLY=0
+TAG=""
+while [ $# -gt 0 ]; do
+  case "$1" in
+    --release-only) RELEASE_ONLY=1 ;;
+    -*) echo "check-published: unknown option $1" >&2; exit 2 ;;
+    *)
+      [ -z "$TAG" ] || { echo "check-published: unexpected extra argument $1" >&2; exit 2; }
+      TAG="$1"
+      ;;
+  esac
+  shift
+done
+[ -n "$TAG" ] || { echo "check-published: usage: check-published.sh [--release-only] <tag>" >&2; exit 2; }
 
 fail() { echo "check-published: FAILED — $*" >&2; exit 1; }
 
@@ -46,16 +64,25 @@ fetch() { curl -fsSL "$1" > "$2" 2>/dev/null; }
 fetch "$API_BASE/repos/$ghrepo/releases/latest" "$TMPD/latest.json" \
   || fail "cannot read releases/latest for $ghrepo — is anything published?"
 
+# Skipped entirely under --release-only, rather than fetched and ignored: in
+# that window the manifest on master is EXPECTED to disagree, and a fetch whose
+# result is discarded invites someone to later "fix" the discrepancy it prints.
+# The empty path below tells the checker there is nothing to judge.
+#
 # A miss here is THE silent one, so it is named for what it breaks rather than
 # reported as a bare HTTP error.
-if ! fetch "$RAW_BASE/$ghrepo/master/Info.json" "$TMPD/raw.json"; then
+if [ "$RELEASE_ONLY" = 1 ]; then
+  raw_arg=""
+elif ! fetch "$RAW_BASE/$ghrepo/master/Info.json" "$TMPD/raw.json"; then
   fail "IINA's update check reads $RAW_BASE/$ghrepo/master/Info.json and it is not there.
     Existing users will be told \"No update found.\" no matter how correct the
     release is — IINA folds a failed fetch and \"no newer version\" into one
     branch. The manifest must be committed at the REPOSITORY ROOT of master."
+else
+  raw_arg="$TMPD/raw.json"
 fi
 
-/usr/bin/python3 - "$TAG" "$TMPD/latest.json" "$TMPD/raw.json" <<'PY'
+/usr/bin/python3 - "$TAG" "$TMPD/latest.json" "$raw_arg" <<'PY'
 import json, sys
 
 tag, latest_path, raw_path = sys.argv[1], sys.argv[2], sys.argv[3]
@@ -73,7 +100,9 @@ def load(path, what):
 
 
 latest = load(latest_path, "releases/latest")
-raw = load(raw_path, "the manifest on master")
+# An empty raw_path is --release-only: the manifest on master was never
+# fetched, because in that window it is expected to disagree.
+raw = load(raw_path, "the manifest on master") if raw_path else None
 
 # --- the install mechanism ---------------------------------------------------
 if latest.get("tag_name") != tag:
@@ -100,8 +129,10 @@ if len(plgz) != 1:
     )
 
 # --- the update mechanism ----------------------------------------------------
-raw_version = raw.get("version")
-if raw_version != expected_version:
+raw_version = raw.get("version") if raw is not None else None
+if raw is None:
+    pass
+elif raw_version != expected_version:
     problems.append(
         f"the manifest on master says version {raw_version!r}, but this tag is {tag!r} "
         f"(expected {expected_version!r}). IINA's update check reads master, not the "
@@ -109,8 +140,8 @@ if raw_version != expected_version:
         f"this release."
     )
 
-gh = raw.get("ghVersion")
-if isinstance(gh, bool) or not isinstance(gh, int):
+gh = raw.get("ghVersion") if raw is not None else None
+if raw is not None and (isinstance(gh, bool) or not isinstance(gh, int)):
     problems.append(
         f"ghVersion on master must be a JSON integer, not {type(gh).__name__} — "
         f"IINA casts it as? Int, and a wrong type silently disables update checks"
@@ -122,9 +153,19 @@ if problems:
         print(f"  - {p}", file=sys.stderr)
     sys.exit(1)
 
-print(
-    f"check-published: OK — {tag} is /releases/latest with one .iinaplgz, and "
-    f"master's manifest reports version {raw_version} / ghVersion {gh}, so IINA "
-    f"offers the update to existing installs."
-)
+# Two distinct messages, because these are two distinct claims and the weaker
+# one is read mid-sequence. A bare "OK" here could be mistaken for the full
+# gate, which is the one that says the release is actually done.
+if raw is None:
+    print(
+        f"check-published: OK (release half only) — {tag} is /releases/latest with "
+        f"one .iinaplgz. master's manifest was NOT checked; run without "
+        f"--release-only after merging the bump."
+    )
+else:
+    print(
+        f"check-published: OK — {tag} is /releases/latest with one .iinaplgz, and "
+        f"master's manifest reports version {raw_version} / ghVersion {gh}, so IINA "
+        f"offers the update to existing installs."
+    )
 PY
