@@ -163,13 +163,17 @@ Steps, in order:
    acceptance run described below.
 9. Write `build/iina-airplay.iinaplgz.sha256`; upload both as an artifact.
 
-**The cache key is `hashFiles('packaging/build-ffmpeg.sh')`, which is
-byte-identical to the script's own `RECIPE_HASH`** — both are the SHA-256 of the
-same file. The key GitHub computes and the stamp the script writes are the same
-number arrived at independently, so they cross-check rather than merely agree by
-convention. Exact key only; no `restore-keys` prefix fallback, because a
-near-miss restore has no value here — a mismatched stamp forces a full rebuild
-anyway.
+**The cache key is `hashFiles('packaging/build-ffmpeg.sh')`.** That is not the
+same number as the script's own `RECIPE_HASH`: `hashFiles()` hashes a list of
+per-file SHA-256 digests, while the script computes `shasum -a 256` on the file
+itself — a hash of hashes versus a direct digest. What they share is the
+condition under which they change: the key changes if and only if
+`build-ffmpeg.sh` changes, which is exactly the condition that invalidates the
+script's own `.recipe-hash` stamp. So a cache restore hits precisely when the
+stamp would also call the build up to date, and misses precisely when the stamp
+would call for a rebuild — they agree on *when*, never on the *value*. Exact key
+only; no `restore-keys` prefix fallback, because a near-miss restore has no
+value here — a mismatched stamp forces a full rebuild anyway.
 
 Cached paths are four files, not the tree:
 

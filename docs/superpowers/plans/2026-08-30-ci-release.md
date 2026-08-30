@@ -252,8 +252,12 @@ with:
 
 - [ ] **Step 6: Verify `pack.sh` no longer references IINA and still parses**
 
-Run: `bash -n packaging/pack.sh && ! grep -n 'IINA_PLUGIN\|iina-plugin' packaging/pack.sh && echo CLEAN`
-Expected: prints `CLEAN`. (`bash -n` is a syntax check; `grep` must find nothing.)
+Run: `bash -n packaging/pack.sh && ! grep -nE '\$IINA_PLUGIN\b|"\$IINA_PLUGIN"' packaging/pack.sh && echo CLEAN`
+Expected: prints `CLEAN`. (`bash -n` is a syntax check; the grep looks for an
+actual use of the `$IINA_PLUGIN` variable — an invocation of the CLI — not for
+the bare string "iina-plugin", which Step 5's replacement comment still
+legitimately contains ("The old iina-plugin CLI wrote…"). A check for that
+string would never pass.)
 
 - [ ] **Step 7: Commit**
 
@@ -1200,11 +1204,26 @@ jobs:
       # Before the long build, so an ordinary unit-test failure costs seconds.
       - run: make test
 
-      # The key is hashFiles() of build-ffmpeg.sh — byte-identical to the
-      # RECIPE_HASH the script computes for itself, since both are the SHA-256
-      # of the same file. GitHub's key and the script's own stamp are the same
-      # number arrived at independently, so they cross-check rather than merely
-      # agree by convention.
+      # Split into restore + save (rather than a single actions/cache step):
+      # actions/cache's own action.yml declares its save as a post-if:
+      # "success()" step, so a single `cache` step here would only bank the
+      # build if EVERY later step in this job also succeeded — discarding a
+      # ffmpeg build that had already finished successfully if
+      # build-helper.sh, pack.sh, verify.sh, test-package.sh, the checksum, or
+      # the artifact upload then failed. A retry would pay for the full
+      # ~25-minute build all over again, which is exactly the cost this cache
+      # exists to avoid. Restoring here and saving right after the build step
+      # below banks it the moment it exists, not at the end of a job that may
+      # never get there.
+      #
+      # The key changes if and only if build-ffmpeg.sh changes: hashFiles()
+      # hashes this file's bytes into the key, which is the same condition
+      # that invalidates the script's own RECIPE_HASH stamp (also derived from
+      # this file, via `shasum -a 256`) — so a restore hits exactly when the
+      # recipe is unchanged, and misses exactly when the script's own stamp
+      # would also call for a rebuild. (The two are not the same number —
+      # hashFiles() hashes a list of per-file digests, not the file's own
+      # digest — they just always change together.)
       #
       # Four files, not the tree: the configured source tree is gigabytes and
       # nothing downstream reads it — except COPYING.LGPLv2.1, which pack.sh
@@ -1213,8 +1232,9 @@ jobs:
       #
       # No restore-keys: a near-miss restore has no value, since a mismatched
       # stamp forces a full rebuild anyway.
-      - name: Cache the pinned ffmpeg build
-        uses: actions/cache@v6
+      - name: Restore the pinned ffmpeg build
+        id: restore-ffmpeg-cache
+        uses: actions/cache/restore@v6
         with:
           path: |
             build/ffmpeg/ffmpeg
@@ -1226,6 +1246,22 @@ jobs:
       # A no-op on a cache hit, via the .recipe-hash stamp it writes itself.
       - name: Build the pinned LGPL ffmpeg
         run: ./packaging/build-ffmpeg.sh
+
+      # Saved immediately after the build exists, rather than left to
+      # actions/cache's own post-job save (see above) — `if: always()` banks
+      # it even when a later step in this job fails. Saving under a key that
+      # already exists (a cache hit above, where the build step was a no-op)
+      # is a benign no-op, so this is safe to run unconditionally.
+      - name: Save the pinned ffmpeg build
+        if: always()
+        uses: actions/cache/save@v6
+        with:
+          path: |
+            build/ffmpeg/ffmpeg
+            build/ffmpeg/VERSION
+            build/ffmpeg/.recipe-hash
+            build/ffmpeg/src/COPYING.LGPLv2.1
+          key: ${{ steps.restore-ffmpeg-cache.outputs.cache-primary-key }}
 
       - name: Build the universal helper
         run: ./packaging/build-helper.sh

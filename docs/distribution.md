@@ -5,18 +5,20 @@
 > and a pinned static LGPL ffmpeg. No first-run downloads, no native code loaded
 > into IINA, no Apple Developer ID.**
 
-> **Status 2026-08-29:** the package is built locally by `make pack` and
-> verified by `packaging/verify.sh`, which now runs its licensing and
-> capability assertions against both the arm64 and (via Rosetta) x86_64
-> slices. **A packed `.iinaplgz` has been installed through IINA's own
-> installer and cast to a real Apple TV**, confirming the central Gatekeeper
-> finding below in practice: binaries inside an IINA-installed package run on
-> their ad-hoc signatures alone, with no notarization.
->
-> Still outstanding: CI, the tagged GitHub release, and executing the x86_64
-> slice on an actual Intel Mac (it is verified structurally and under Rosetta,
-> but no Intel hardware has run it). See
-> `docs/superpowers/specs/2026-08-29-distribution-local-pack-design.md`.
+> **Status 2026-08-30:** `make pack` builds the package locally and
+> `packaging/verify.sh` gates it. **A packed `.iinaplgz` has been installed
+> through IINA and cast to a real Apple TV** (2026-08-29), confirming the
+> Gatekeeper finding below in practice. CI now builds, verifies and remux-tests
+> the package on both architectures on every PR and tag push, and attaches it
+> to a draft GitHub release. **The x86_64 slice has now executed on genuine
+> Intel hardware for the first time** — previously it was only checked
+> structurally and under Rosetta — with `verify.sh`'s licensing and encoder
+> assertions and a real `test-package.sh` remux both passing natively on
+> Intel. Still outstanding: installing from a **published** release and
+> confirming no quarantine reaches the binaries, which closes only once a
+> human publishes a draft and installs by repo slug. See
+> `docs/superpowers/specs/2026-08-30-ci-release-design.md` and
+> `docs/releasing.md`.
 
 ## The decision, and the two designs it beat
 
@@ -137,14 +139,48 @@ the way encoders/muxers are): the `-ac 6` downmix in the pipeline auto-inserts
 an `aresample` filter, and the `hevc_videotoolbox` re-encode branch needs
 decoders for whatever codec it's re-encoding from.
 
-## CI / release (GitHub Actions, macOS runner)
+## CI / release (GitHub Actions)
 
-1. Build ffmpeg from the pinned recipe for arm64 + x86_64, `lipo` → universal.
-   Cache by recipe hash — rebuilt only when the pin or flags change.
-2. `go build` the helper for both arches, `lipo`, verify ad-hoc signatures exist.
-3. Assemble the plugin directory, `iina-plugin pack`, attach the `.iinaplgz` and
-   SHA-256s to the GitHub release. `Info.json`'s `ghVersion` bump lets IINA's
-   own update check find new releases.
+`.github/workflows/ci.yml` runs `make test` on `macos-15` for every branch push
+and pull request. `.github/workflows/package.yml` runs the packaging chain on
+`v*` tags, on manual dispatch, and on PRs touching `packaging/`, `helper/`,
+`plugin/` or the `Makefile`:
+
+1. **`build`** (`macos-15`, arm64) gates the tag, builds the pinned ffmpeg,
+   builds the universal helper, packs, then runs `verify.sh` and
+   `test-package.sh`. The ffmpeg build is cached — restored before it runs,
+   saved right after — on a key derived from the SHA-256 of
+   `build-ffmpeg.sh`, which changes exactly when the script's own
+   recipe-hash stamp would also call for a rebuild, so the two agree on when
+   a rebuild is needed without ever being the same number.
+2. **`verify-intel`** (`macos-15-intel`) downloads that exact artifact and runs
+   the same two commands on real Intel hardware. It builds nothing. It asserts
+   `uname -m` is `x86_64` first: the arm64 runners have no Rosetta, so
+   `verify.sh`'s x86_64 assertions *skip* there, and this job is the only
+   coverage of that slice rather than redundant coverage.
+3. **`release`** attaches the package and its SHA-256 to a **draft** release.
+   `api.github.com/.../releases/latest` excludes drafts, so IINA cannot see it
+   until a human publishes it.
+
+**Measured on GitHub's `macos-15` runner** (two `workflow_dispatch` dry runs,
+run 33303326387): a cold cache costs about 5 minutes for the ffmpeg build
+itself, about 6.5 minutes for the whole `build` job, and about 9 minutes for
+`build` → `verify-intel` end to end. Warm, `build` finishes in under 2
+minutes — both the GitHub cache and the script's own `.recipe-hash` stamp
+agreed independently that no rebuild was needed. What the cache buys is not
+mainly the minutes: it turns a rebuild that already takes single digits of
+minutes into a no-op, and the restore/save split (rather than one
+`actions/cache` step) means a late failure in `pack.sh`, `verify.sh`, or the
+upload never discards an ffmpeg build that had already finished — a plain
+`cache` step only saves if every later step in the job also succeeds. A local
+`make pack` on a developer machine is considerably slower than this — see
+`README.md`'s "Building the package yourself".
+
+**`macos-15-intel` is GitHub's last x86_64 macOS image and disappears in August
+2027.** After that the Intel gate has to move to self-hosted hardware or be
+dropped along with the x86_64 slice.
+
+No signing beyond ad-hoc, and no secrets of any kind.
 
 ## Failure modes
 

@@ -19,8 +19,9 @@ possible future round. The package (`.iinaplgz`, pinned static ffmpeg,
 ad-hoc-signed helper) is built locally by `make pack`, verified by
 `packaging/verify.sh`, and has been **installed through IINA and cast to a real
 Apple TV** (2026-08-29) — so the Gatekeeper assumption the whole design rests on
-holds in practice, not just on paper. CI and the tagged GitHub release are not
-wired up yet — see `docs/distribution.md`.
+holds in practice, not just on paper. CI builds, verifies and remux-tests the
+package on both Apple Silicon and Intel runners and attaches it to a draft
+release; see `docs/releasing.md`.
 
 ## Install
 
