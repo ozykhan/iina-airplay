@@ -14,7 +14,7 @@
     --accent: #007AFF;
     --accent-hi: #40A0FF;
     --warn: #8A5B06;
-    --shade: rgba(255, 255, 255, 0.45);
+    --shade: rgba(0, 0, 0, 0.28);
   }
   @media (prefers-color-scheme: dark) {
     :root {
@@ -114,15 +114,15 @@
       <p id="headline">Preparing…</p>
       <p id="sub"></p>
     </div>
-    <div id="meter">
+    <div id="meter" class="hide">
       <div id="bar"><div id="fill"></div></div>
       <div class="row spread" id="times">
         <span id="elapsed"></span><span id="total"></span>
       </div>
     </div>
     <div id="actions">
-      <button id="primary" type="button"></button>
-      <button id="secondary" type="button" class="quiet"></button>
+      <button id="primary" type="button" class="hide"></button>
+      <button id="secondary" type="button" class="quiet hide"></button>
     </div>
   </div>
 </div>
@@ -149,6 +149,7 @@
   var ended = false;
   var localErr = "";        // page-side media failure, distinct from state.msg
   var primaryAct = "start"; // what #primary does: "start" | "pick" | "stop"
+  var secondaryAct = null;  // what #secondary does: null | "pick" | "stop"
 
   function applySync(sync) {
     if (!sync || !loadedURL) return;
@@ -181,7 +182,6 @@
     v.pause(); v.removeAttribute("src"); v.load();
     loadedURL = null; retried = false; onTV = false;
     v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
-    localErr = "";
   }
   function showPicker() {
     if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
@@ -227,31 +227,33 @@
       r = { dot: "bad", headline: "Couldn't cast", sub: s.msg || localErr,
             warn: true, meter: false, pct: 0, done: false,
             primary: "Try again", act: "start", accent: true, off: false,
-            secondary: casting ? "Stop casting" : null };
+            secondary: casting ? "Stop casting" : null,
+            sact: casting ? "stop" : null };
     } else if (!casting) {
       r = { dot: "", headline: "Not casting", sub: subs.label,
             warn: subs.warn, meter: false, pct: 0, done: false,
             primary: "Start casting", act: "start", accent: true, off: false,
-            secondary: null };
+            secondary: null, sact: null };
     } else if (s.phase === "starting") {
       r = { dot: "busy", headline: "Packaging", sub: subs.label,
             warn: subs.warn, meter: true, pct: s.pct || 0, done: false,
             primary: "Send to TV", act: "pick", accent: true, off: true,
-            secondary: "Cancel" };
+            secondary: "Cancel", sact: "stop" };
     } else if (onTV) {
       var pos = v.currentTime || 0;
       r = { dot: "live", headline: "Playing on TV", sub: subs.label,
             warn: subs.warn, meter: true, done: false,
             pct: s.duration > 0 ? (pos / s.duration) * 100 : 0,
             primary: "Stop casting", act: "stop", accent: false, off: false,
-            secondary: "Send to another TV" };
+            secondary: "Send to another TV", sact: "pick" };
     } else {
+      var packaged = s.phase === "packaged";
       r = { dot: "", headline: "Ready to send",
             sub: airplayAvailable ? subs.label : "Waiting for AirPlay devices…",
             warn: airplayAvailable && subs.warn,
-            meter: true, pct: 100, done: true,
+            meter: true, pct: packaged ? 100 : (s.pct || 0), done: packaged,
             primary: "Send to TV", act: "pick", accent: true,
-            off: !airplayAvailable, secondary: "Stop casting" };
+            off: !airplayAvailable, secondary: "Stop casting", sact: "stop" };
     }
 
     dot.className = r.dot;
@@ -264,8 +266,8 @@
     fill.style.width = Math.max(0, Math.min(100, r.pct)) + "%";
     fill.className = r.done ? "done" : "";
     elapsedEl.textContent = onTV ? clock(v.currentTime || 0)
-                          : s.phase === "starting" ? Math.round(s.pct || 0) + "%"
-                          : "Packaged";
+                          : s.phase === "packaged" ? "Packaged"
+                          : Math.round(s.pct || 0) + "%";
     totalEl.textContent = s.duration > 0 ? clock(s.duration) : "";
 
     primary.textContent = r.primary;
@@ -275,6 +277,7 @@
 
     secondary.textContent = r.secondary || "";
     secondary.className = r.secondary ? "quiet" : "quiet hide";
+    secondaryAct = r.sact;
   }
 
   v.addEventListener("error", function () {
@@ -298,14 +301,17 @@
   v.addEventListener("ended", function () { ended = true; });
   primary.onclick = function () {
     if (primaryAct === "pick") showPicker();
-    else if (primaryAct === "stop") { teardownLocal(); iina.postMessage("stop", {}); }
-    else { teardownLocal(); iina.postMessage("start", {}); }
+    else if (primaryAct === "stop") {
+      localErr = ""; teardownLocal(); iina.postMessage("stop", {});
+    } else {
+      localErr = ""; teardownLocal(); iina.postMessage("start", {});
+    }
   };
   secondary.onclick = function () {
-    // "Send to another TV" while playing; "Cancel"/"Stop casting" otherwise.
-    if (onTV) { showPicker(); return; }
-    teardownLocal();
-    iina.postMessage("stop", {});
+    if (secondaryAct === "pick") showPicker();
+    else if (secondaryAct === "stop") {
+      localErr = ""; teardownLocal(); iina.postMessage("stop", {});
+    }
   };
   iina.onMessage("state", render);
   setInterval(function () {
