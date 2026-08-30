@@ -233,8 +233,16 @@ if (typeof iina !== "undefined") {
   // Every post to the page goes through this so the page always sees the live
   // sync block alongside the pipeline state.
   function stateForPage() {
+    // duration and subs are derived here, not stored on `state`: selectTracks
+    // otherwise runs only at cast start, so a stored label would be empty
+    // before the first cast — exactly when the user is deciding whether to
+    // cast — and would go stale if the subtitle track changed mid-session.
+    // Safe to read mpv here: every caller is a sidebar.onMessage handler,
+    // which IINA runs on the main thread.
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      duration: mpv.getNumber("duration") || 0,
+      subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
       sync: mirror === null ? null : {
         seq: mirror.seq, paused: mirror.paused,
         seekTo: mirror.seekTo, startPos: mirror.startPos,

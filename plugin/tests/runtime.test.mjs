@@ -359,3 +359,32 @@ test("restarting a cast after a helper-initiated teardown does not corrupt the s
   p.send("stop", {});
   assert.equal(p.flags.mute, false, "savedMute must come from the user's real pre-cast value");
 });
+
+test("state carries duration and a subtitle label", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.send("getState", {}); // simulate the page's poll so a "state" message is posted
+  const s = p.state();
+  assert.equal(s.duration, 120);
+  assert.deepEqual(s.subs, { label: "No subtitles", warn: false });
+});
+
+test("state reports the selected subtitle track", () => {
+  const p = loadPlugin({ tracks: [
+    { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
+    { type: "audio", selected: true, codec: "aac", "ff-index": 1, "demux-channel-count": 2 },
+    { type: "sub", selected: true, codec: "subrip", "ff-index": 2, lang: "eng" },
+  ] });
+  p.clickMenu();
+  p.send("getState", {}); // simulate the page's poll so a "state" message is posted
+  assert.equal(p.state().subs.label, "Subtitles: eng");
+});
+
+test("subtitle label is available before any cast starts", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.send("stop");
+  const s = p.state();
+  assert.equal(s.phase, "idle");
+  assert.equal(s.subs.label, "No subtitles");
+});
