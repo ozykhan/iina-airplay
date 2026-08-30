@@ -30,7 +30,7 @@ Spec: `docs/superpowers/specs/2026-08-30-sidebar-liquid-glass-design.md`
 
 **Interfaces:**
 - Consumes: `selectTracks(trackList)`, already exported, returning `{ vcodec, acodec, achannels, vmap, amap, sub, subDropped }` or `null`. Its `sub` is `{ path, smap, lang, title }` or `null`.
-- Produces: `subtitleLabel(tracks)` → `{ label: string, warn: boolean }`. Task 2 calls it; Task 4 renders `label` and uses `warn` to pick the text color.
+- Produces: `subtitleLabel(tracks)` → `{ label: string, warn: boolean }`. Task 2 calls it; Task 3 renders `label` and uses `warn` to pick the text color.
 
 - [ ] **Step 1: Write the failing tests**
 
@@ -141,7 +141,7 @@ git commit -m "feat: name the subtitle decision with subtitleLabel"
 
 **Interfaces:**
 - Consumes: `subtitleLabel(tracks)` from Task 1.
-- Produces: the `state` payload posted to the page gains `duration: number` (seconds, `0` when unknown) and `subs: { label: string, warn: boolean }`. Task 4 reads both.
+- Produces: the `state` payload posted to the page gains `duration: number` (seconds, `0` when unknown) and `subs: { label: string, warn: boolean }`. Task 3 reads both.
 
 The fake `iina` in `plugin/tests/runtime.test.mjs` already returns `120` for `mpv.getNumber("duration")` and the harness's `trackList` for `mpv.getNative`, so no harness changes are needed. `p.state()` returns the most recently posted state payload.
 
@@ -221,16 +221,16 @@ git commit -m "feat: send duration and subtitle status to the sidebar page"
 
 ---
 
-### Task 3: The glass card — markup and tokens
+### Task 3: The glass card and its state table
 
 **Files:**
-- Modify: `plugin/sidebar.html` (the `<style>` block and the `#wrap` markup; the `<script>` gains new element handles and a rewritten `render()`)
+- Modify: `plugin/sidebar.html` (the `<style>` block, the `#wrap` markup, and the `<script>`)
 
 **Interfaces:**
-- Consumes: the `state` payload from Task 2 (`phase`, `pct`, `msg`, `url`, `sync`, `duration`, `subs`).
-- Produces: DOM ids that Task 4 drives — `#dot`, `#headline`, `#sub`, `#bar`, `#fill`, `#times`, `#elapsed`, `#total`, `#primary`, `#secondary`. Task 4 replaces the body of `render()` and both button handlers.
+- Consumes: the `state` payload from Task 2 — `phase`, `pct`, `msg`, `url`, `sync`, `duration`, `subs` (where `subs` is `{ label, warn }` from Task 1).
+- Produces: nothing downstream. This is the last code task.
 
-This task lands a page that looks right and still casts. Task 4 makes every row of the state table correct.
+This is one task because the markup, the CSS, and the render function cannot be separated without leaving the page broken between commits. Preserve `applySync()`, the three `webkit*` listeners, and the polling block at the bottom of the file — they carry the muted-mirror contract.
 
 - [ ] **Step 1: Replace the `<style>` block**
 
@@ -337,7 +337,7 @@ In `plugin/sidebar.html`, replace everything between `<style>` and `</style>` wi
 
 - [ ] **Step 2: Replace the `#wrap` markup**
 
-Replace the `<div id="wrap">…</div>` block (leave the `<video>` element that follows it exactly as it is) with:
+Replace the `<div id="wrap">…</div>` block. Leave the `<video>` element that follows it exactly as it is — its attributes carry the AirPlay opt-in.
 
 ```html
 <div id="wrap">
@@ -367,7 +367,7 @@ Replace the `<div id="wrap">…</div>` block (leave the `<video>` element that f
 </div>
 ```
 
-- [ ] **Step 3: Update the element handles**
+- [ ] **Step 3: Replace the element handles and add two flags**
 
 Replace the first block of `var` declarations at the top of the `<script>` — the six lines from `var v = document.getElementById("v");` through `var fill = document.getElementById("fill");` — with:
 
@@ -391,11 +391,34 @@ Leave every other `var` in that block (`loadedURL`, `retried`, `airplayAvailable
   var primaryAct = "start"; // what #primary does: "start" | "pick" | "stop"
 ```
 
-`localErr` replaces the removed `#err` paragraph. The `v.addEventListener("error", ...)` handler currently writes into `errEl`, which no longer exists — Step 4 rewires it.
+`localErr` replaces the removed `#err` paragraph.
 
-- [ ] **Step 4: Make the page compile and still cast**
+- [ ] **Step 4: Add the shared helpers**
 
-The old `render()`, `pick.onclick`, and `castBtn.onclick` reference `pick`, `castBtn`, `statusEl`, and `errEl`, which no longer exist. Replace `render()` with this interim version, which keeps the teardown and load branches intact, and replace both `onclick` assignments with the two handlers below. Task 4 rewrites the presentation half of `render()`.
+Insert these above `render()`. `teardownLocal` collects the eight-assignment reset that the old file repeated in three places.
+
+```javascript
+  function teardownLocal() {
+    v.pause(); v.removeAttribute("src"); v.load();
+    loadedURL = null; retried = false; onTV = false;
+    v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
+    localErr = "";
+  }
+  function showPicker() {
+    if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
+  }
+  function clock(sec) {
+    if (!(sec > 0)) return "0:00";
+    var t = Math.floor(sec), h = Math.floor(t / 3600),
+        m = Math.floor((t % 3600) / 60), s = t % 60;
+    var mm = h > 0 && m < 10 ? "0" + m : String(m);
+    return (h > 0 ? h + ":" : "") + mm + ":" + (s < 10 ? "0" + s : s);
+  }
+```
+
+- [ ] **Step 5: Rewrite `render()` and add `present()`**
+
+Replace the whole existing `render()` function with these two. The `casting` assignment, the teardown branch, the `applySync` call, and the new-URL branch keep their existing behavior and comments; only the presentation moves out into `present()`.
 
 ```javascript
   function render(s) {
@@ -403,9 +426,7 @@ The old `render()`, `pick.onclick`, and `castBtn.onclick` reference `pick`, `cas
     if (!casting && loadedURL) {
       // main.js tore the cast down (helper died, file changed, TV ended):
       // drop the stream locally too, or the element keeps AirPlaying a corpse.
-      v.pause(); v.removeAttribute("src"); v.load();
-      loadedURL = null; retried = false; onTV = false;
-      v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
+      teardownLocal();
     }
     applySync(s.sync);
     present(s);
@@ -421,97 +442,6 @@ The old `render()`, `pick.onclick`, and `castBtn.onclick` reference `pick`, `cas
     }
   }
 
-  function present(s) {
-    headline.textContent = casting ? "Casting" : "Not casting";
-    subEl.textContent = (s.subs && s.subs.label) || "";
-    fill.style.width = (s.pct || 0) + "%";
-    primary.textContent = casting ? "Send to TV" : "Start casting";
-    secondary.textContent = "Stop casting";
-  }
-```
-
-```javascript
-  primary.onclick = function () {
-    if (casting) { if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker(); }
-    else { localErr = ""; iina.postMessage("start", {}); }
-  };
-  secondary.onclick = function () {
-    v.pause(); v.removeAttribute("src"); v.load();
-    loadedURL = null; retried = false; onTV = false;
-    v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
-    localErr = "";
-    iina.postMessage("stop", {});
-  };
-```
-
-Two existing listeners still reference removed elements. Update the availability listener, which assigns `pick.disabled`:
-
-```javascript
-  v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {
-    airplayAvailable = ev.availability === "available";
-  });
-```
-
-And the media-error listener, whose `else` branch writes into `errEl`. Keep the retry-once behavior exactly as it is; only the reporting changes:
-
-```javascript
-  v.addEventListener("error", function () {
-    if (!loadedURL) return;                // src cleared by a stop, not a real failure
-    if (!retried) {                        // retry exactly once (docs/prototype.md)
-      retried = true;
-      v.src = loadedURL;
-      v.play().catch(function () {});
-    } else {
-      localErr = "Stream failed to load (media error " +
-        (v.error ? v.error.code : "?") + ").";
-    }
-  });
-```
-
-Clear `localErr` wherever a fresh attempt begins — in `teardownLocal()` (Task 4) and in the `"start"` branch of the primary handler below.
-
-- [ ] **Step 5: Verify nothing regressed and the page loads**
-
-Run: `make test`
-Expected: PASS — this task touches no tested code, so a failure means something else broke.
-
-Then load the plugin in IINA (`make dev`, restart IINA, open a file, run the **Cast to TV** menu item) and confirm: the glass card renders, the buttons work, and a cast still reaches the TV. Check both appearances via System Settings → Appearance.
-
-- [ ] **Step 6: Commit**
-
-```bash
-git add plugin/sidebar.html
-git commit -m "feat: rebuild the sidebar as a glass card in both appearances"
-```
-
----
-
-### Task 4: The state table
-
-**Files:**
-- Modify: `plugin/sidebar.html` (the `present()` function, the two button handlers, and the `webkitcurrentplaybacktargetiswirelesschanged` listener)
-
-**Interfaces:**
-- Consumes: `#dot`, `#headline`, `#sub`, `#meter`, `#fill`, `#elapsed`, `#total`, `#primary`, `#secondary` from Task 3; `s.duration` and `s.subs` from Task 2; the page-local `casting`, `onTV`, and `airplayAvailable` flags.
-- Produces: nothing downstream. This is the last code task.
-
-- [ ] **Step 1: Add the time formatter**
-
-Insert above `present()`:
-
-```javascript
-  function clock(sec) {
-    if (!(sec > 0)) return "0:00";
-    var t = Math.floor(sec), h = Math.floor(t / 3600),
-        m = Math.floor((t % 3600) / 60), s = t % 60;
-    var mm = h > 0 && m < 10 ? "0" + m : String(m);
-    return (h > 0 ? h + ":" : "") + mm + ":" + (s < 10 ? "0" + s : s);
-  }
-```
-
-- [ ] **Step 2: Replace `present()` with the full state table**
-
-```javascript
   // One row of the spec's state table per branch. `act` is what the primary
   // button does when clicked: "start", "pick", or "stop".
   function present(s) {
@@ -575,20 +505,32 @@ Insert above `present()`:
   }
 ```
 
-- [ ] **Step 3: Dispatch the primary action**
+- [ ] **Step 6: Rewire the listeners and the button handlers**
 
-`primaryAct` was declared in Task 3, Step 3. Replace the two button handlers from Task 3 with:
+Two existing listeners reference removed elements. The media-error listener keeps its retry-once behavior exactly; only the reporting target changes.
 
 ```javascript
-  function teardownLocal() {
-    v.pause(); v.removeAttribute("src"); v.load();
-    loadedURL = null; retried = false; onTV = false;
-    v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
-    localErr = "";
-  }
-  function showPicker() {
-    if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
-  }
+  v.addEventListener("error", function () {
+    if (!loadedURL) return;                // src cleared by a stop, not a real failure
+    if (!retried) {                        // retry exactly once (docs/prototype.md)
+      retried = true;
+      v.src = loadedURL;
+      v.play().catch(function () {});
+    } else {
+      localErr = "Stream failed to load (media error " +
+        (v.error ? v.error.code : "?") + ").";
+    }
+  });
+  v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {
+    airplayAvailable = ev.availability === "available";
+  });
+```
+
+Leave `webkitcurrentplaybacktargetiswirelesschanged` and the `ended` listener as they are.
+
+Replace the old `pick.onclick` and `castBtn.onclick` assignments with:
+
+```javascript
   primary.onclick = function () {
     if (primaryAct === "pick") showPicker();
     else if (primaryAct === "stop") { teardownLocal(); iina.postMessage("stop", {}); }
@@ -602,35 +544,30 @@ Insert above `present()`:
   };
 ```
 
-Then replace the teardown block inside `render()` with a call to the shared helper, so the same eight assignments do not live in three places:
+- [ ] **Step 7: Confirm the polling block is untouched**
 
-```javascript
-    if (!casting && loadedURL) {
-      // main.js tore the cast down (helper died, file changed, TV ended):
-      // drop the stream locally too, or the element keeps AirPlaying a corpse.
-      teardownLocal();
-    }
-```
+The `setInterval` at the bottom of the file must still post `getState` every 500ms and still post `tvState` while casting. `render()` runs on each reply, which is what keeps the elapsed clock ticking — no extra timer is needed.
 
-- [ ] **Step 4: Keep the elapsed time ticking**
+- [ ] **Step 8: Verify no removed identifier survives**
 
-`render()` runs only when `main.js` posts state, which the page requests every 500ms — fast enough for a seconds display, so no extra timer is needed. Confirm the existing `setInterval` block at the bottom of the file still posts `getState` every 500ms and is otherwise unmodified.
+Run: `grep -n "statusEl\|errEl\|castBtn\|pick\b" plugin/sidebar.html`
+Expected: no output. Those four identifiers were removed with the old markup; any hit is a reference that will throw at runtime.
 
-- [ ] **Step 5: Run the test suite**
+- [ ] **Step 9: Run the test suite**
 
 Run: `make test`
-Expected: PASS — no tested code changed in this task; a failure means Task 2's changes regressed.
+Expected: PASS. This task changes no tested code, so a failure means Task 2 regressed.
 
-- [ ] **Step 6: Commit**
+- [ ] **Step 10: Commit**
 
 ```bash
 git add plugin/sidebar.html
-git commit -m "feat: drive the sidebar card from the cast state table"
+git commit -m "feat: rebuild the sidebar as a glass card driven by the state table"
 ```
 
 ---
 
-### Task 5: Manual verification against the state table
+### Task 4: Manual verification against the state table
 
 **Files:**
 - Modify: none (fixes only, if the pass finds something)
