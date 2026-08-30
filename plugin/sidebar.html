@@ -2,36 +2,142 @@
 <meta charset="utf-8">
 <title>AirPlay</title>
 <style>
-  html, body { margin: 0; background: transparent; color: #e8e8ee;
-    font: 13px/1.5 -apple-system, BlinkMacSystemFont, sans-serif; }
+  :root {
+    --glass-fill-top: rgba(0, 0, 0, 0.06);
+    --glass-fill-bot: rgba(0, 0, 0, 0.02);
+    --glass-edge: rgba(0, 0, 0, 0.08);
+    --glass-spec: rgba(255, 255, 255, 0.70);
+    --track: rgba(0, 0, 0, 0.10);
+    --neutral-btn: rgba(0, 0, 0, 0.06);
+    --ink: #1C1C1E;
+    --ink-2: rgba(0, 0, 0, 0.55);
+    --accent: #007AFF;
+    --accent-hi: #40A0FF;
+    --warn: #8A5B06;
+    --shade: rgba(255, 255, 255, 0.45);
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --glass-fill-top: rgba(255, 255, 255, 0.13);
+      --glass-fill-bot: rgba(255, 255, 255, 0.035);
+      --glass-edge: rgba(255, 255, 255, 0.10);
+      --glass-spec: rgba(255, 255, 255, 0.22);
+      --track: rgba(255, 255, 255, 0.13);
+      --neutral-btn: rgba(255, 255, 255, 0.09);
+      --ink: #F2F3F5;
+      --ink-2: rgba(255, 255, 255, 0.58);
+      --accent: #0A84FF;
+      --accent-hi: #3D9BFF;
+      --warn: #F0C169;
+      --shade: rgba(255, 255, 255, 0.90);
+    }
+  }
+
+  html, body { margin: 0; background: transparent; color: var(--ink);
+    font: 13px/1.45 -apple-system, BlinkMacSystemFont, sans-serif;
+    -webkit-font-smoothing: antialiased; }
   video { width: 1px; height: 1px; opacity: 0.01; position: absolute; }
-  #wrap { padding: 14px; }
-  button { display: block; width: 100%; padding: 10px; margin: 8px 0;
-    font: inherit; font-weight: 600; border-radius: 8px; border: none;
-    background: #2f6fed; color: white; cursor: pointer; }
-  button:disabled { background: #444; color: #999; }
-  #bar { height: 4px; background: #333; border-radius: 2px; margin: 10px 0; }
-  #fill { height: 100%; width: 0; background: #2f6fed; border-radius: 2px; }
-  #status { min-height: 2.6em; }
-  #err { color: #e8b84a; white-space: pre-wrap; font-size: 11px; }
+  #wrap { padding: 12px; }
+
+  #card {
+    display: flex; flex-direction: column; gap: 12px;
+    padding: 14px; border-radius: 16px;
+    background: linear-gradient(180deg, var(--glass-fill-top), var(--glass-fill-bot));
+    -webkit-backdrop-filter: blur(22px) saturate(180%);
+    backdrop-filter: blur(22px) saturate(180%);
+    border: 1px solid var(--glass-edge);
+    box-shadow: inset 0 1px 0 var(--glass-spec), 0 8px 22px rgba(0, 0, 0, 0.16);
+  }
+
+  .row { display: flex; align-items: center; gap: 8px; }
+  .spread { justify-content: space-between; }
+  .grow { min-width: 0; }
+
+  #head { color: var(--ink-2); }
+  #head svg { width: 16px; height: 16px; flex: none; }
+  #cap { font-size: 10px; font-weight: 600; letter-spacing: 0.09em;
+    text-transform: uppercase; }
+
+  #dot { width: 6px; height: 6px; border-radius: 50%; flex: none;
+    background: transparent; }
+  #dot.busy { background: #E0A93C; box-shadow: 0 0 7px rgba(224, 169, 60, 0.75); }
+  #dot.live { background: #30C24E; box-shadow: 0 0 7px rgba(48, 194, 78, 0.75); }
+  #dot.bad  { background: #E0523C; box-shadow: 0 0 7px rgba(224, 82, 60, 0.75); }
+
+  #headline { margin: 0; font-size: 15px; font-weight: 590;
+    letter-spacing: -0.01em; }
+  #sub { margin: 0; font-size: 12px; color: var(--ink-2); }
+  #sub.warn { color: var(--warn); }
+  #headline, #sub { overflow: hidden; text-overflow: ellipsis;
+    white-space: nowrap; }
+
+  #meter { display: flex; flex-direction: column; gap: 6px; }
+  #bar { height: 5px; border-radius: 3px; background: var(--track);
+    overflow: hidden; }
+  #fill { height: 100%; width: 0; border-radius: 3px;
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+    transition: width 0.4s cubic-bezier(0.32, 0.72, 0, 1); }
+  #fill.done { background: var(--shade); }
+  #times { font-size: 11.5px; color: var(--ink-2);
+    font-variant-numeric: tabular-nums; }
+
+  #actions { display: flex; flex-direction: column; gap: 6px; }
+  button { display: block; width: 100%; padding: 9px 12px; border: none;
+    border-radius: 11px; font: inherit; font-size: 13px; font-weight: 590;
+    cursor: pointer; color: var(--ink); background: var(--neutral-btn);
+    box-shadow: inset 0 1px 0 var(--glass-spec); }
+  button.accent { color: #fff;
+    background: linear-gradient(180deg, var(--accent-hi), var(--accent));
+    box-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.35),
+                0 4px 12px rgba(10, 111, 232, 0.30); }
+  button.quiet { background: transparent; box-shadow: none;
+    color: var(--ink-2); font-weight: 500; font-size: 12.5px; padding: 5px; }
+  button:disabled { color: var(--ink-2); background: var(--neutral-btn);
+    box-shadow: none; cursor: default; opacity: 0.6; }
+  button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+  .hide { display: none; }
+
+  @media (prefers-reduced-motion: reduce) { #fill { transition: none; } }
 </style>
 
 <div id="wrap">
-  <p id="status">Preparing…</p>
-  <div id="bar"><div id="fill"></div></div>
-  <button id="pick" disabled>Send to TV</button>
-  <button id="cast">Stop casting</button>
-  <p id="err"></p>
+  <div id="card">
+    <div class="row spread" id="head">
+      <div class="row" style="gap:6px">
+        <svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.4" y="3.4" width="19.2" height="13" rx="2.6" stroke="currentColor" stroke-width="1.6" opacity="0.75"/><path d="M12 14.4 17 21H7z" fill="currentColor"/></svg>
+        <span id="cap">AirPlay</span>
+      </div>
+      <span id="dot"></span>
+    </div>
+    <div class="grow">
+      <p id="headline">Preparing…</p>
+      <p id="sub"></p>
+    </div>
+    <div id="meter">
+      <div id="bar"><div id="fill"></div></div>
+      <div class="row spread" id="times">
+        <span id="elapsed"></span><span id="total"></span>
+      </div>
+    </div>
+    <div id="actions">
+      <button id="primary" type="button"></button>
+      <button id="secondary" type="button" class="quiet"></button>
+    </div>
+  </div>
 </div>
 <video id="v" autoplay muted playsinline x-webkit-airplay="allow"></video>
 
 <script>
   var v = document.getElementById("v");
-  var pick = document.getElementById("pick");
-  var castBtn = document.getElementById("cast");
-  var statusEl = document.getElementById("status");
-  var errEl = document.getElementById("err");
+  var dot = document.getElementById("dot");
+  var headline = document.getElementById("headline");
+  var subEl = document.getElementById("sub");
+  var meter = document.getElementById("meter");
   var fill = document.getElementById("fill");
+  var elapsedEl = document.getElementById("elapsed");
+  var totalEl = document.getElementById("total");
+  var primary = document.getElementById("primary");
+  var secondary = document.getElementById("secondary");
   var loadedURL = null;
   var retried = false;      // known WebKit flake: first load may fail once
   var airplayAvailable = false;
@@ -40,6 +146,8 @@
   var appliedSeq = 0;
   var initialSeekPending = false;
   var ended = false;
+  var localErr = "";        // page-side media failure, distinct from state.msg
+  var primaryAct = "start"; // what #primary does: "start" | "pick" | "stop"
 
   function applySync(sync) {
     if (!sync || !loadedURL) return;
@@ -68,30 +176,32 @@
     }
   }
 
+  function teardownLocal() {
+    v.pause(); v.removeAttribute("src"); v.load();
+    loadedURL = null; retried = false; onTV = false;
+    v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
+    localErr = "";
+  }
+  function showPicker() {
+    if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
+  }
+  function clock(sec) {
+    if (!(sec > 0)) return "0:00";
+    var t = Math.floor(sec), h = Math.floor(t / 3600),
+        m = Math.floor((t % 3600) / 60), s = t % 60;
+    var mm = h > 0 && m < 10 ? "0" + m : String(m);
+    return (h > 0 ? h + ":" : "") + mm + ":" + (s < 10 ? "0" + s : s);
+  }
+
   function render(s) {
     casting = s.phase === "starting" || s.phase === "ready" || s.phase === "packaged";
-    castBtn.textContent = casting ? "Stop casting" : "Start casting";
-    // Nothing to hand to a TV when no stream is loaded, and the availability
-    // event can lag a teardown — so gate the picker on the cast, not just on it.
-    pick.disabled = !airplayAvailable || !casting;
-    fill.style.width = (s.pct || 0) + "%";
     if (!casting && loadedURL) {
       // main.js tore the cast down (helper died, file changed, TV ended):
       // drop the stream locally too, or the element keeps AirPlaying a corpse.
-      v.pause(); v.removeAttribute("src"); v.load();
-      loadedURL = null; retried = false; onTV = false;
-      v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
+      teardownLocal();
     }
     applySync(s.sync);
-    if (s.phase === "error") { statusEl.textContent = "Failed."; errEl.textContent = s.msg || ""; return; }
-    errEl.textContent = "";
-    if (onTV) { statusEl.textContent = "Playing on TV."; return; }
-    if (s.phase === "idle") statusEl.textContent = "Not casting.";
-    else if (s.phase === "starting") statusEl.textContent = "Packaging…";
-    else if (s.phase === "ready" || s.phase === "packaged") {
-      statusEl.textContent = airplayAvailable ? "Ready — click Send to TV."
-                                              : "Ready — waiting for AirPlay devices…";
-    }
+    present(s);
     if ((s.phase === "ready" || s.phase === "packaged") && s.url && s.url !== loadedURL) {
       loadedURL = s.url;
       retried = false;
@@ -104,6 +214,68 @@
     }
   }
 
+  // One row of the spec's state table per branch. `act` is what the primary
+  // button does when clicked: "start", "pick", or "stop".
+  function present(s) {
+    var subs = s.subs || { label: "", warn: false };
+    var r;
+    if (s.phase === "error" || localErr) {
+      // A page-side media failure is still a failed cast from the user's side,
+      // so it takes the same row. state.msg wins when both are set: main.js
+      // knows why the pipeline died, the <video> element only knows it choked.
+      r = { dot: "bad", headline: "Couldn't cast", sub: s.msg || localErr,
+            warn: true, meter: false, pct: 0, done: false,
+            primary: "Try again", act: "start", accent: true, off: false,
+            secondary: casting ? "Stop casting" : null };
+    } else if (!casting) {
+      r = { dot: "", headline: "Not casting", sub: subs.label,
+            warn: subs.warn, meter: false, pct: 0, done: false,
+            primary: "Start casting", act: "start", accent: true, off: false,
+            secondary: null };
+    } else if (s.phase === "starting") {
+      r = { dot: "busy", headline: "Packaging", sub: subs.label,
+            warn: subs.warn, meter: true, pct: s.pct || 0, done: false,
+            primary: "Send to TV", act: "pick", accent: true, off: true,
+            secondary: "Cancel" };
+    } else if (onTV) {
+      var pos = v.currentTime || 0;
+      r = { dot: "live", headline: "Playing on TV", sub: subs.label,
+            warn: subs.warn, meter: true, done: false,
+            pct: s.duration > 0 ? (pos / s.duration) * 100 : 0,
+            primary: "Stop casting", act: "stop", accent: false, off: false,
+            secondary: "Send to another TV" };
+    } else {
+      r = { dot: "", headline: "Ready to send",
+            sub: airplayAvailable ? subs.label : "Waiting for AirPlay devices…",
+            warn: airplayAvailable && subs.warn,
+            meter: true, pct: 100, done: true,
+            primary: "Send to TV", act: "pick", accent: true,
+            off: !airplayAvailable, secondary: "Stop casting" };
+    }
+
+    dot.className = r.dot;
+    headline.textContent = r.headline;
+    subEl.textContent = r.sub;
+    subEl.title = r.sub;                 // the full string, when it ellipsizes
+    subEl.className = r.warn ? "warn" : "";
+
+    meter.className = r.meter ? "" : "hide";
+    fill.style.width = Math.max(0, Math.min(100, r.pct)) + "%";
+    fill.className = r.done ? "done" : "";
+    elapsedEl.textContent = onTV ? clock(v.currentTime || 0)
+                          : s.phase === "starting" ? Math.round(s.pct || 0) + "%"
+                          : "Packaged";
+    totalEl.textContent = s.duration > 0 ? clock(s.duration) : "";
+
+    primary.textContent = r.primary;
+    primary.disabled = r.off;
+    primary.className = r.accent && !r.off ? "accent" : "";
+    primaryAct = r.act;
+
+    secondary.textContent = r.secondary || "";
+    secondary.className = r.secondary ? "quiet" : "quiet hide";
+  }
+
   v.addEventListener("error", function () {
     if (!loadedURL) return;                // src cleared by a stop, not a real failure
     if (!retried) {                        // retry exactly once (docs/prototype.md)
@@ -111,33 +283,28 @@
       v.src = loadedURL;
       v.play().catch(function () {});
     } else {
-      errEl.textContent = "Stream failed to load (media error " +
+      localErr = "Stream failed to load (media error " +
         (v.error ? v.error.code : "?") + ").";
     }
   });
   v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {
     airplayAvailable = ev.availability === "available";
-    pick.disabled = !airplayAvailable || !casting;
   });
   v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", function () {
     onTV = !!v.webkitCurrentPlaybackTargetIsWireless;
     v.muted = !onTV;   // silent on the Mac, audible on the TV
   });
   v.addEventListener("ended", function () { ended = true; });
-  pick.onclick = function () {
-    if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
+  primary.onclick = function () {
+    if (primaryAct === "pick") showPicker();
+    else if (primaryAct === "stop") { teardownLocal(); iina.postMessage("stop", {}); }
+    else { localErr = ""; iina.postMessage("start", {}); }
   };
-  castBtn.onclick = function () {
-    if (casting) {
-      v.pause(); v.removeAttribute("src"); v.load();
-      loadedURL = null; retried = false; onTV = false;
-      v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
-      iina.postMessage("stop", {});
-    } else {
-      errEl.textContent = "";
-      statusEl.textContent = "Packaging…";
-      iina.postMessage("start", {});
-    }
+  secondary.onclick = function () {
+    // "Send to another TV" while playing; "Cancel"/"Stop casting" otherwise.
+    if (onTV) { showPicker(); return; }
+    teardownLocal();
+    iina.postMessage("stop", {});
   };
   iina.onMessage("state", render);
   setInterval(function () {
