@@ -96,6 +96,90 @@ function normalizeSource(p) {
   try { return decodeURIComponent(rest); } catch (e) { return rest; }
 }
 
+// ---- muted-mirror sync core (spec: docs/superpowers/specs/2026-08-30-native-controls-mirror-design.md) ----
+// The TV is the clock; mpv is the mirror. AirPlay HLS runs seconds behind any
+// local clock, so mpv's position is never authoritative during a cast. These
+// functions are pure — they take the mirror bookkeeping object plus
+// observations and return new state/actions without touching IINA APIs — so
+// node tests can drive every branch.
+
+var DRIFT_TOLERANCE = 1.5; // seconds of mpv/TV divergence tolerated before correcting
+var ECHO_WINDOW_MS = 2000; // how long our own time-pos set may echo back as an mpv seek event
+
+function newMirror(startPos, savedMute, paused) {
+  return {
+    seq: 0,               // last issued command sequence number
+    paused: paused,       // desired TV pause state (follows mpv)
+    seekTo: null,         // pending user seek {seq, pos}; cleared when the page acks it
+    startPos: startPos,   // where IINA was at cast start; the page best-effort seeks the TV here
+    savedMute: savedMute, // mpv mute flag to restore on teardown
+    expectMpvPause: null, // swallow the next pause.changed that echoes our own mpv.set
+    lastSetPos: null,     // {pos, at} of our last programmatic time-pos set (echo suppression)
+  };
+}
+
+// mpv's pause flag changed. Bumps seq only for user-initiated changes; an
+// expected echo of our own mpv.set(pause) must not become a command back to
+// the TV, or TV-remote pauses would ping-pong.
+function mirrorOnMpvPause(m, mpvPaused) {
+  var n = Object.assign({}, m);
+  if (m.expectMpvPause !== null && mpvPaused === m.expectMpvPause) {
+    n.expectMpvPause = null;
+    return n;
+  }
+  n.expectMpvPause = null;
+  if (mpvPaused !== m.paused) {
+    n.paused = mpvPaused;
+    n.seq = m.seq + 1;
+  }
+  return n;
+}
+
+// mpv seeked. A seek near our own recent time-pos set is drift correction
+// echoing back, not the user; anything else becomes a TV seek command.
+// seekTo carries its own seq so the page never re-applies a seek it has
+// already performed when a later pause command bumps the outer seq.
+function mirrorOnMpvSeek(m, mpvPos, now) {
+  var n = Object.assign({}, m);
+  if (m.lastSetPos !== null &&
+      now - m.lastSetPos.at < ECHO_WINDOW_MS &&
+      Math.abs(mpvPos - m.lastSetPos.pos) <= DRIFT_TOLERANCE) {
+    n.lastSetPos = null;
+    return n;
+  }
+  n.seq = m.seq + 1;
+  n.seekTo = { seq: n.seq, pos: mpvPos };
+  return n;
+}
+
+// The page reported TV state. Decides what (if anything) to push into mpv.
+// While commands are in flight (appliedSeq < seq) the TV state is stale, so
+// nothing is reconciled against it — not even drift. ended only tears the
+// cast down once the TV is actually the one playing: a short file's LOCAL
+// (muted, hidden) playback ending before the user ever picks a TV must not
+// kill the cast. An acked seekTo is cleared as soon as it's acked, even
+// before wireless playback starts, so a pre-wireless user seek doesn't leave
+// a stale command sitting in the sync block.
+function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
+  var out = { m: m, setMpvPos: null, setMpvPaused: null, teardown: false };
+  if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
+  var n = Object.assign({}, m);
+  var acked = tvState.appliedSeq >= m.seq;
+  if (acked) n.seekTo = null;
+  out.m = n;
+  if (!tvState.wireless || !acked) return out; // nothing on the TV yet, or a command is in flight: no clock to follow
+  if (tvState.paused !== n.paused) {      // TV-remote initiated: mirror into mpv
+    n.paused = tvState.paused;
+    n.expectMpvPause = tvState.paused;
+    out.setMpvPaused = tvState.paused;
+  }
+  if (Math.abs(mpvPos - tvState.pos) > DRIFT_TOLERANCE) {
+    out.setMpvPos = tvState.pos;
+    n.lastSetPos = { pos: tvState.pos, at: now };
+  }
+  return out;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
@@ -104,6 +188,12 @@ if (typeof module !== "undefined") {
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
+    newMirror: newMirror,
+    mirrorOnMpvPause: mirrorOnMpvPause,
+    mirrorOnMpvSeek: mirrorOnMpvSeek,
+    mirrorOnTvState: mirrorOnTvState,
+    DRIFT_TOLERANCE: DRIFT_TOLERANCE,
+    ECHO_WINDOW_MS: ECHO_WINDOW_MS,
   };
 }
 
@@ -111,7 +201,7 @@ if (typeof module !== "undefined") {
 
 if (typeof iina !== "undefined") {
   var core = iina.core, mpv = iina.mpv, menu = iina.menu, sidebar = iina.sidebar,
-      utils = iina.utils, file = iina.file, console = iina.console;
+      utils = iina.utils, file = iina.file, console = iina.console, event = iina.event;
 
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
@@ -122,6 +212,51 @@ if (typeof iina !== "undefined") {
   // stops a superseded cast's stale callbacks from clobbering the state of
   // whatever cast (or idle state) came after it.
   var castGen = 0;
+
+  // Active muted mirror (spec 2026-08-30), or null when not casting. Event
+  // callbacks may ONLY swap this object via the pure mirrorOn* functions;
+  // everything that touches mpv runs in onMessage/menu context.
+  var mirror = null;
+
+  // Every post to the page goes through this so the page always sees the live
+  // sync block alongside the pipeline state.
+  function stateForPage() {
+    return {
+      phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      sync: mirror === null ? null : {
+        seq: mirror.seq, paused: mirror.paused,
+        seekTo: mirror.seekTo, startPos: mirror.startPos,
+      },
+    };
+  }
+
+  function endMirror() {
+    if (mirror === null) return;
+    mpv.set("mute", mirror.savedMute);
+    mirror = null;
+  }
+
+  // Helper-initiated teardowns (stopped/error events, exec settling) happen in
+  // exec callbacks, which must not touch mpv from off-main. They only mutate
+  // `state`; the page's next poll lands here (onMessage: safe) and sweeps up.
+  function reapMirror() {
+    if (mirror !== null && (state.phase === "idle" || state.phase === "error")) endMirror();
+  }
+
+  event.on("mpv.pause.changed", function () {
+    if (mirror === null) return;
+    mirror = mirrorOnMpvPause(mirror, !!mpv.getFlag("pause"));
+  });
+  event.on("mpv.seek", function () {
+    if (mirror === null) return;
+    mirror = mirrorOnMpvSeek(mirror, mpv.getNumber("time-pos") || 0, Date.now());
+  });
+  // A new file invalidates the whole cast: the stream on the TV is the old
+  // file. file-loaded is an app event (main thread), so stopCast is safe here.
+  event.on("iina.file-loaded", function () {
+    if (mirror === null) return;
+    stopCast();
+  });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
   // plugin itself lives directly under that <.../plugins> directory. Locate
@@ -181,6 +316,10 @@ if (typeof iina !== "undefined") {
   }
 
   function startCast() {
+    reapMirror(); // a helper-initiated teardown may have left a stale mirror
+                  // un-reaped (only the getState poll normally does that); a
+                  // restart must not let newMirror() capture that stale
+                  // savedMute instead of the user's real pre-cast value.
     if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
     var src = normalizeSource(mpv.getString("path"));
     if (!src) {
@@ -229,7 +368,10 @@ if (typeof iina !== "undefined") {
     var gen = ++castGen;
     stdoutRest = "";
     state = { phase: "starting", url: null, pct: 0, msg: null };
-    core.pause();
+    // Muted mirror: keep mpv playing, silenced, instead of pausing. The page
+    // will best-effort seek the TV to startPos once wireless playback begins.
+    mirror = newMirror(mpv.getNumber("time-pos") || 0, !!mpv.getFlag("mute"), !!mpv.getFlag("pause"));
+    mpv.set("mute", true);
 
     resolveBinDir(function (binDir, resolveErr) {
       if (gen !== castGen) return; // superseded by a newer cast or a stop
@@ -286,6 +428,7 @@ if (typeof iina !== "undefined") {
   }
 
   function stopCast() {
+    endMirror();
     castGen++; // invalidate any in-flight cast's callbacks
     resolveBinDir(function (binDir, resolveErr) {
       if (resolveErr) { console.log("[stopCast] " + resolveErr); return; }
@@ -297,18 +440,30 @@ if (typeof iina !== "undefined") {
   function openSidebar() {
     sidebar.loadFile("sidebar.html"); // clears message listeners — register after
     sidebar.onMessage("getState", function () {
-      sidebar.postMessage("state", state); // onMessage handlers are main-thread safe
+      reapMirror();
+      sidebar.postMessage("state", stateForPage()); // onMessage handlers are main-thread safe
     });
     // The page owns starting too, not just stopping: stopCast() tears the whole
     // pipeline down, so without this the sidebar would be a dead end and the
     // only way back to a cast would be re-running the menu item.
     sidebar.onMessage("start", function () {
       startCast();
-      sidebar.postMessage("state", state);
+      sidebar.postMessage("state", stateForPage());
     });
     sidebar.onMessage("stop", function () {
       stopCast();
-      sidebar.postMessage("state", state);
+      sidebar.postMessage("state", stateForPage());
+    });
+    sidebar.onMessage("tvState", function (tv) {
+      reapMirror(); // a helper-initiated teardown may have left a stale mirror
+                    // un-reaped; don't mpv.set against a dead stream.
+      if (mirror === null || !tv) return;
+      var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
+                              !!mpv.getFlag("pause"), Date.now());
+      mirror = r.m;
+      if (r.teardown) { stopCast(); return; }
+      if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
+      if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);
     });
     sidebar.show();
   }

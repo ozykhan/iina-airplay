@@ -23,7 +23,7 @@
   <button id="cast">Stop casting</button>
   <p id="err"></p>
 </div>
-<video id="v" autoplay playsinline x-webkit-airplay="allow"></video>
+<video id="v" autoplay muted playsinline x-webkit-airplay="allow"></video>
 
 <script>
   var v = document.getElementById("v");
@@ -37,6 +37,36 @@
   var airplayAvailable = false;
   var onTV = false;
   var casting = false;
+  var appliedSeq = 0;
+  var initialSeekPending = false;
+  var ended = false;
+
+  function applySync(sync) {
+    if (!sync || !loadedURL) return;
+    if (sync.seq > appliedSeq) {
+      // seekTo carries its own seq so a later pause command doesn't replay a
+      // seek this page already performed.
+      if (sync.seekTo && sync.seekTo.seq > appliedSeq) {
+        v.currentTime = sync.seekTo.pos;
+        initialSeekPending = false;   // an explicit user seek supersedes it
+      }
+      if (sync.paused && !v.paused) v.pause();
+      else if (!sync.paused && v.paused) v.play().catch(function () {});
+      appliedSeq = sync.seq;
+    }
+    if (initialSeekPending && onTV && sync.startPos > 0) {
+      // Best-effort (spec): jump to where IINA was, but only once packaging
+      // has reached that point; until then the TV plays from the start and
+      // the mirror follows it.
+      try {
+        if (v.seekable.length &&
+            v.seekable.end(v.seekable.length - 1) >= sync.startPos) {
+          v.currentTime = sync.startPos;
+          initialSeekPending = false;
+        }
+      } catch (e) { initialSeekPending = false; }
+    }
+  }
 
   function render(s) {
     casting = s.phase === "starting" || s.phase === "ready" || s.phase === "packaged";
@@ -45,6 +75,14 @@
     // event can lag a teardown — so gate the picker on the cast, not just on it.
     pick.disabled = !airplayAvailable || !casting;
     fill.style.width = (s.pct || 0) + "%";
+    if (!casting && loadedURL) {
+      // main.js tore the cast down (helper died, file changed, TV ended):
+      // drop the stream locally too, or the element keeps AirPlaying a corpse.
+      v.pause(); v.removeAttribute("src"); v.load();
+      loadedURL = null; retried = false; onTV = false;
+      v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
+    }
+    applySync(s.sync);
     if (s.phase === "error") { statusEl.textContent = "Failed."; errEl.textContent = s.msg || ""; return; }
     errEl.textContent = "";
     if (onTV) { statusEl.textContent = "Playing on TV."; return; }
@@ -57,6 +95,10 @@
     if ((s.phase === "ready" || s.phase === "packaged") && s.url && s.url !== loadedURL) {
       loadedURL = s.url;
       retried = false;
+      // -1, not 0: the mirror's very first sync (seq 0) carries the cast's
+      // initial paused snapshot, and applySync's `sync.seq > appliedSeq` gate
+      // would otherwise never let it through, autoplaying over a paused mpv.
+      appliedSeq = -1; ended = false; initialSeekPending = true;
       v.src = s.url;
       v.play().catch(function () {});
     }
@@ -79,7 +121,9 @@
   });
   v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", function () {
     onTV = !!v.webkitCurrentPlaybackTargetIsWireless;
+    v.muted = !onTV;   // silent on the Mac, audible on the TV
   });
+  v.addEventListener("ended", function () { ended = true; });
   pick.onclick = function () {
     if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
   };
@@ -87,6 +131,7 @@
     if (casting) {
       v.pause(); v.removeAttribute("src"); v.load();
       loadedURL = null; retried = false; onTV = false;
+      v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
       iina.postMessage("stop", {});
     } else {
       errEl.textContent = "";
@@ -95,6 +140,17 @@
     }
   };
   iina.onMessage("state", render);
-  setInterval(function () { iina.postMessage("getState", {}); }, 500);
+  setInterval(function () {
+    iina.postMessage("getState", {});
+    if (casting && loadedURL) {
+      iina.postMessage("tvState", {
+        appliedSeq: appliedSeq,
+        pos: v.currentTime || 0,
+        paused: v.paused,
+        wireless: onTV,
+        ended: ended,
+      });
+    }
+  }, 500);
   iina.postMessage("getState", {});
 </script>
