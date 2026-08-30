@@ -117,7 +117,9 @@ Trunk-based. `master` is the single long-lived branch and stays green.
 
 - Branch off `master`, named `<your-gh-name>/<short-description>`.
 - Conventional-commit messages (`feat:`, `fix:`, `test:`, `docs:`, `chore:`).
-- Run `make test` before pushing — it's the same gate CI applies.
+- Run `make test` before pushing — it's the same gate CI applies. CI runs on
+  pull requests and on `master`, not on every branch push, so a work-in-progress
+  push with no PR open deliberately produces no run.
 - Open the PR into `master`. Reference the issue in the body (`Part of #N`, or
   `Closes #N` when the merge fully finishes it).
 - PRs are **squash-merged**, so the PR title and body become the commit on
