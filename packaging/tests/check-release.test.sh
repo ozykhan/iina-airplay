@@ -87,6 +87,16 @@ expect_ok "ghVersion increased" "$bumped" v0.2.0 "OK"
 forgot="$(make_repo forgot "0.1.0:1:v0.1.0" "0.2.0:1:v0.2.0")"
 expect_fail "ghVersion not bumped" "$forgot" v0.2.0 "ghVersion"
 
+# actions/checkout's default is fetch-depth: 1 with no tags, which truncates
+# history the same way a genuine first release does: the previous-tag lookup
+# comes back empty either way. Shallow-clone the "forgot" fixture (a real
+# ghVersion bug) at v0.2.0 so its previous tag is unreachable, and confirm the
+# gate refuses to guess rather than silently treating it as a first release.
+# The file:// form is required for --depth to actually truncate a local path.
+shallow="$TMP/shallow"
+git clone -q --depth 1 --branch v0.2.0 "file://$forgot" "$shallow" 2>/dev/null
+expect_fail "shallow clone hides the previous tag" "$shallow" v0.2.0 "shallow"
+
 went_back="$(make_repo wentback "0.1.0:5:v0.1.0" "0.2.0:4:v0.2.0")"
 expect_fail "ghVersion went backwards" "$went_back" v0.2.0 "ghVersion"
 

@@ -51,6 +51,19 @@ ghversion="$(sed -n 2p <<<"$info_fields")"
 [ "$TAG" = "v$version" ] \
   || fail "tag $TAG does not match plugin/Info.json version $version — expected tag v$version"
 
+# A shallow clone truncates history in exactly the way that makes the
+# previous-tag lookup below come back empty whether or not a previous tag
+# actually exists — the empty result is ambiguous, and letting it fall
+# through unchecked resolves that ambiguity in the dangerous direction: a
+# forgotten ghVersion bump on a truncated checkout would sail through as if
+# this were the first release. Settle the ambiguity here, before the lookup,
+# instead of guessing from its result.
+if ! is_shallow="$(git -C "$ROOT" rev-parse --is-shallow-repository 2>&1)"; then
+  fail "cannot determine whether $ROOT has full git history: $is_shallow"
+fi
+[ "$is_shallow" = "false" ] \
+  || fail "checkout has truncated history (shallow clone) — the ghVersion monotonicity check needs full history with tags; re-run actions/checkout with fetch-depth: 0"
+
 # --abbrev=0 on the tag's PARENT gives the nearest tag strictly before this
 # one. Requires unshallowed history with tags: actions/checkout must run with
 # fetch-depth: 0, or this finds nothing and the monotonicity check is skipped
