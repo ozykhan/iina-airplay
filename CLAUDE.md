@@ -48,6 +48,23 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   Dolby Vision Profile 5, HDR10 / HDR10+ / HLG; audio AAC, AC-3, E-AC-3, Atmos,
   ALAC, FLAC. Not MKV, not DTS/DTS-HD, not TrueHD, not PGS subtitles.
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
+- **Install and update are two different mechanisms**, and satisfying one does
+  not satisfy the other. Installing by slug reads
+  `api.github.com/repos/<ghRepo>/releases/latest` and takes the first asset
+  ending `.iinaplgz`. The update check reads
+  `raw.githubusercontent.com/<ghRepo>/master/Info.json` — the **repository root
+  of `master`**, never the release — and compares its `ghVersion`; only then
+  does it fetch the asset. This is why `Info.json` lives at the repo root and
+  `packaging/pack.sh` copies it into the package. IINA 1.4.4 folds a failed
+  fetch and "no newer version" into one branch (`JavascriptPlugin.swift`,
+  `checkForUpdates`), so a 404 there surfaces as **"No update found."** with no
+  error — `v0.2.0` shipped perfectly and still reached nobody. Bumping
+  `ghVersion` is necessary but not sufficient. The beacon is *branch state*, so
+  a manifest fix reaches existing users on a plain push to `master`, with no new
+  tag or rebuild. `plugin/Info.json` is a gitignored `make dev` symlink so IINA
+  can load the plugin directory — never commit it: `raw.githubusercontent.com`
+  serves a symlink's target path as text, not JSON. Full reasoning in
+  `docs/releasing.md`.
 
 ## The design is settled — all prototype tests passed (2026-08-29, user-confirmed)
 
