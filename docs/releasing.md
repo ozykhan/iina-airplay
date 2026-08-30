@@ -60,9 +60,13 @@ publish one that does not.
 
 ## Rebuilding without releasing
 
-`workflow_dispatch` on `package.yml` runs `build` and `verify-intel` and creates
-no release, leaving the `.iinaplgz` as a workflow artifact. Use it to rehearse,
-and to warm the ffmpeg cache before a tag push.
+`workflow_dispatch` on `package.yml` is the intended way to rehearse the chain
+and warm the ffmpeg cache before a tag push: it runs `build` and
+`verify-intel` and creates no release, leaving the `.iinaplgz` as a workflow
+artifact. Dispatching a workflow requires it to exist on the default branch,
+so this becomes available once `package.yml` merges to `master` — it has not
+been exercised yet; the two runs measured so far were both `pull_request`
+runs on PR #1.
 
 The `release` job never runs on a dispatch, so preview its notes by hand against
 the artifact:

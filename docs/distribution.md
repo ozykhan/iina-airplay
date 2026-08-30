@@ -144,7 +144,7 @@ decoders for whatever codec it's re-encoding from.
 `.github/workflows/ci.yml` runs `make test` on `macos-15` for every branch push
 and pull request. `.github/workflows/package.yml` runs the packaging chain on
 `v*` tags, on manual dispatch, and on PRs touching `packaging/`, `helper/`,
-`plugin/` or the `Makefile`:
+`plugin/`, `Makefile`, or `.github/workflows/package.yml` itself:
 
 1. **`build`** (`macos-15`, arm64) gates the tag, builds the pinned ffmpeg,
    builds the universal helper, packs, then runs `verify.sh` and
@@ -162,8 +162,9 @@ and pull request. `.github/workflows/package.yml` runs the packaging chain on
    `api.github.com/.../releases/latest` excludes drafts, so IINA cannot see it
    until a human publishes it.
 
-**Measured on GitHub's `macos-15` runner** (two `workflow_dispatch` dry runs,
-run 33303326387): a cold cache costs about 5 minutes for the ffmpeg build
+**Measured on GitHub's `macos-15` runner** (two executions of the
+`pull_request` run on PR #1 — the initial run and a re-run — run
+33303326387): a cold cache costs about 5 minutes for the ffmpeg build
 itself, about 6.5 minutes for the whole `build` job, and about 9 minutes for
 `build` → `verify-intel` end to end. Warm, `build` finishes in under 2
 minutes — both the GitHub cache and the script's own `.recipe-hash` stamp
