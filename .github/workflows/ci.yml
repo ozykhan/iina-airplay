@@ -3,9 +3,23 @@ name: ci
 # Tags are excluded: package.yml owns them and runs `make test` itself, so the
 # release chain is self-contained rather than depending on a second workflow's
 # status.
+#
+# The push trigger is master-only rather than '**' because a branch pushed to
+# this repo with a PR open satisfies BOTH triggers, and the concurrency group
+# below does not collapse the pair: github.ref is refs/heads/<branch> for the
+# push and refs/pull/N/merge for the pull_request, so the two runs land in
+# different groups and neither cancels the other. That billed two macos-15 runs
+# — the priciest runner here, at 10x the Linux rate — for every PR, both green,
+# both redundant.
+#
+# PRs keep their `test` check from the pull_request event, which is the context
+# master's branch protection actually requires, so the merge gate is unchanged;
+# merges to master still get a post-merge run from the push leg. The one thing
+# given up is CI on a branch pushed WITHOUT an open PR — deliberate, since the
+# gate that matters is the PR.
 on:
   push:
-    branches: ['**']
+    branches: [master]
   pull_request:
 
 permissions:
