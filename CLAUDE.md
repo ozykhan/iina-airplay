@@ -56,8 +56,12 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   `api.github.com/repos/<ghRepo>/releases/latest` and takes the first asset
   ending `.iinaplgz`. The update check reads
   `raw.githubusercontent.com/<ghRepo>/master/Info.json` — the **repository root
-  of `master`**, never the release — and compares its `ghVersion`; only then
-  does it fetch the asset. This is why `Info.json` lives at the repo root and
+  of `master`**, never the release — and compares its `ghVersion` against **the
+  installed package's own**; only then does it fetch the asset. So the shipped
+  `.iinaplgz` and `master` must carry the same number, and the bump is merged to
+  `master` **last**, after the release is published — otherwise the beacon
+  advertises a version whose asset is not up yet and the update hands out the
+  previous release. This is why `Info.json` lives at the repo root and
   `packaging/pack.sh` copies it into the package. IINA 1.4.4 folds a failed
   fetch and "no newer version" into one branch (`JavascriptPlugin.swift`,
   `checkForUpdates`), so a 404 there surfaces as **"No update found."** with no

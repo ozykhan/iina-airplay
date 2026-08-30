@@ -7,7 +7,13 @@ publish one that does not.
 
 ## Cutting a release
 
-1. **Bump both numbers in `Info.json` — the one at the repository root.**
+**The order below is load-bearing.** The bump to `master` comes *last*, after
+the release is published — see "The skew has a direction" below for why. Do not
+merge the bump early to get it out of the way; that is the one mistake this
+sequence exists to prevent.
+
+1. **Bump both numbers in `Info.json` — the one at the repository root — on a
+   release branch, and open the PR without merging it.**
 
    - `version` — the semver string, e.g. `0.2.0`. The tag must be `v` + this.
    - `ghVersion` — an **Int**, a monotonic counter. **Not** the semver string.
@@ -21,60 +27,105 @@ publish one that does not.
    The manifest's **location** is load-bearing for the same reason, and cost a
    release to learn — see "Two mechanisms" below.
 
-2. **Commit, then tag and push.**
-
    ```sh
-   git tag v0.2.0
-   git push origin master v0.2.0
+   git checkout -b release/v0.3.0
+   # edit Info.json, commit
+   gh pr create --base master
    ```
 
-3. **Watch the chain.** `gh run watch`. `build` gates the tag first, so a
+2. **Warm the ffmpeg cache.** `gh workflow run package.yml --ref master`, and
+   let it finish. Actions caches are scoped by ref: only ones written on the
+   default branch are readable from a tag, so a PR run warms nothing. Skipping
+   this costs about eight minutes on the tag build. See "Rebuilding without
+   releasing" below.
+
+3. **Tag the branch head and push the tag.** Not `master` — `master` does not
+   carry the bump yet, and will not until step 9.
+
+   ```sh
+   ./packaging/check-release.sh v0.3.0   # seconds, before the build
+   git tag v0.3.0
+   git push origin v0.3.0
+   ```
+
+4. **Watch the chain.** `gh run watch`. `build` gates the tag first, so a
    mismatch fails in seconds. On GitHub's `macos-15` runner a cold ffmpeg
    cache costs about 5 minutes to build and about 9 minutes for the whole
    `build` → `verify-intel` chain; warm, `build` finishes in under 2 minutes.
    A local `make pack` is considerably slower on a developer machine — see
    `README.md`.
 
-4. **Read the `verify-intel` log**, not just its checkmark. Three lines are the
+5. **Read the `verify-intel` log**, not just its checkmark. Three lines are the
    point of the job:
 
    - `runner architecture: x86_64`
    - `verify: note — the native slice is x86_64, so its assertions run natively`
    - `test-package: driving iina-airplay.iinaplgz through the helper suite on x86_64`
 
-5. **Review the draft release.** Confirm exactly one `.iinaplgz` asset, its
+6. **Review the draft release.** Confirm exactly one `.iinaplgz` asset, its
    `.sha256` sidecar, and notes naming the FFmpeg version, upstream source URL
    and source SHA-256 — that last part is the LGPL obligation, not decoration.
 
-6. **Publish it.** The publish dialog offers two checkboxes — leave **Set as
+7. **Publish it.** The publish dialog offers two checkboxes — leave **Set as
    a pre-release** unchecked, and confirm **Set as the latest release** is
    checked. Either one wrong and `api.github.com/.../releases/latest` skips
    this release exactly as it skips a draft: every check stays green, the
    release page looks fine, and nothing reaches users.
 
-7. **Gate the published result.** Both mechanisms, one command:
+8. **Prove the release half is live, before throwing the switch.**
 
    ```sh
-   ./packaging/check-published.sh v0.2.0
+   ./packaging/check-published.sh --release-only v0.3.0
    ```
 
-   `check-release.sh` gates the tag before the build; this gates what actually
-   shipped. It asserts `/releases/latest` names this tag with exactly one
-   `.iinaplgz`, **and** that `master`'s manifest is readable at the repo root
-   with a matching version and an Int `ghVersion` — the half that nothing
-   checked before `v0.2.0` shipped to nobody. See "Two mechanisms" below.
+   Asserts `/releases/latest` names this tag, is neither a draft nor a
+   pre-release, and carries exactly one `.iinaplgz`. It does not look at
+   `master` at all — at this point `master` is *supposed* to disagree.
 
-8. **Install it the way a stranger would.** IINA → Settings → Plugins →
-   Install → `ozykhan/iina-airplay`. Not the local-package path — the point is
-   to exercise the download-from-release path, which is the one thing local
-   packaging can never test. Cast one real file, then confirm nothing picked up
-   quarantine:
+9. **Merge the PR.** This is the moment the release turns on for every existing
+   install, and it is the only irreversible step in the sequence — which is why
+   step 8 gates it with a command rather than a glance at the release page.
 
-   ```sh
-   xattr -r ~/Library/Application\ Support/com.colliderli.iina/plugins/*/bin/
-   ```
+10. **Gate the published result.** Both mechanisms, one command:
 
-   Expect `com.apple.provenance` at most, and never `com.apple.quarantine`.
+    ```sh
+    ./packaging/check-published.sh v0.3.0
+    ```
+
+    `check-release.sh` gates the tag before the build; this gates what actually
+    shipped. It asserts `/releases/latest` names this tag with exactly one
+    `.iinaplgz`, **and** that `master`'s manifest is readable at the repo root
+    with a matching version and an Int `ghVersion` — the half that nothing
+    checked before `v0.2.0` shipped to nobody. See "Two mechanisms" below.
+
+    **A release is not done until this passes.** Not when CI is green, not when
+    the release page looks right.
+
+11. **Install it the way a stranger would.** IINA → Settings → Plugins →
+    Install → `ozykhan/iina-airplay`. Not the local-package path — the point is
+    to exercise the download-from-release path, which is the one thing local
+    packaging can never test. Cast one real file, then confirm nothing picked up
+    quarantine:
+
+    ```sh
+    xattr -r ~/Library/Application\ Support/com.colliderli.iina/plugins/*/bin/
+    ```
+
+    Expect `com.apple.provenance` at most, and never `com.apple.quarantine`.
+
+### If the build fails after the tag is pushed
+
+The tag is on an unmerged branch, so nothing user-facing has moved: `master`
+still describes the previous release and `releases/latest` still serves it.
+Delete the tag, fix the branch, tag again.
+
+```sh
+git push --delete origin v0.3.0 && git tag -d v0.3.0
+```
+
+This is strictly cheaper than the failure it replaces. Under the old order the
+bump was already on `master`, so a failed build left the beacon announcing a
+version whose asset did not exist.
 
 ## Two mechanisms, two URLs
 
@@ -109,6 +160,48 @@ Two consequences worth keeping in mind:
 - **`master` must carry the bumped `ghVersion`.** Tagging a release whose
   manifest never lands on `master` leaves the update check reading the old
   number, however correct the release page looks.
+
+### The skew has a direction
+
+The number IINA compares `master`'s `ghVersion` against is **the installed
+package's own** `ghVersion`, read from the manifest inside the `.iinaplgz` the
+user already has. In 1.4.4 (`JavascriptPlugin.swift`, `checkForUpdates`):
+
+```swift
+if let ghVersion = githubVersion, let ghRepo = githubRepo {
+  Just.get("https://raw.githubusercontent.com/\(ghRepo)/master/Info.json", ...) { result in
+    if let json = result.json as? [String: Any],
+       let newGHVersion = json["ghVersion"] as? Int,
+       let newVersion = json["version"] as? String,
+       newGHVersion > ghVersion {          // ghVersion == githubVersion, this install's own
+      handler(newVersion)
+```
+
+Two things follow.
+
+**The shipped package must carry the same `ghVersion` as `master`.** Bumping
+only `master` — letting the release workflow rewrite the manifest as a last
+step, say — is worse than any window it closes: every install would keep
+reporting the old number, `master` would compare greater forever, and IINA
+would offer an update on every check that re-downloads the same package.
+
+**So the bump must be in the tagged tree, and only its arrival on `master` can
+move.** That arrival is the switch, and the skew it creates has a safe
+direction and a dangerous one:
+
+| State | Existing installs | New installs |
+| --- | --- | --- |
+| `master` ahead of `releases/latest` | offered an update, handed the **old** asset | fine |
+| `releases/latest` ahead of `master` | no update offered yet; they wait | get the new version, correctly told they are current |
+
+Publishing before merging keeps the skew in the bottom row for the few minutes
+it exists, and in no row at all the rest of the time. Cutting `v0.3.0` the other
+way round left about ten minutes of the top row.
+
+> On IINA's `develop` branch this is `checkNewVersion()`, which throws on a
+> failed fetch instead of folding it into `nil` — so a future IINA will report a
+> missing manifest as an error rather than as "No update found." The comparison
+> itself is unchanged, and 1.4.4 is what users are running.
 
 `plugin/Info.json` is a gitignored symlink created by `make dev`, because a
 plugin directory must carry its own manifest for IINA to load it. Never commit

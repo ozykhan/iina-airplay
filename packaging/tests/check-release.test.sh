@@ -157,6 +157,75 @@ expect_fail "ghVersion not bumped across the move" "$migrate_forgot" v0.3.0 "ghV
 no_manifest="$(make_repo nomanifest "0.2.0:2:v0.2.0:none" "0.3.0:3:v0.3.0:root")"
 expect_fail "previous tag has no manifest in either location" "$no_manifest" v0.3.0 "cannot read"
 
+# --- the tag on an unmerged release branch -----------------------------------
+# The release sequence publishes BEFORE the bump lands on master, so that the
+# beacon on master never announces a version whose asset is not up yet. The tag
+# is therefore created on the release branch, and master gets the bump only
+# afterwards — as a squash merge, at a DIFFERENT sha, so the tagged commit never
+# enters master's history at all. A previous-tag lookup that walks master's
+# ancestry walks straight past it, and the miss fails OPEN: the next release is
+# compared against the release before last, so a forgotten bump sails through.
+# See docs/superpowers/specs/2026-08-31-release-ordering-design.md.
+
+write_manifest() {
+  local d="$1" version="$2" ghversion="$3"
+  rm -f "$d/Info.json" "$d/plugin/Info.json"
+  cat > "$d/Info.json" <<JSON
+{"name":"AirPlay","identifier":"dev.faruk.iina-airplay","version":"$version",
+ "ghRepo":"ozykhan/iina-airplay","ghVersion":$ghversion,"entry":"main.js"}
+JSON
+}
+
+# Tags version/ghversion on a branch cut from master. merge=squash then puts the
+# same content on master as a NEW commit, exactly as `gh pr merge --squash`
+# leaves it; merge=no leaves the tag on an unmerged branch, which is the state
+# the gate sees at the moment the tag is pushed. Split declarations — see the
+# bash 3.2 note in Global Constraints.
+cut_on_branch() {
+  local d="$1" version="$2" ghversion="$3" tag="$4" merge="$5"
+  git -C "$d" checkout -q -B "release/$tag" master
+  write_manifest "$d" "$version" "$ghversion"
+  git -C "$d" add -A
+  git -C "$d" commit -q -m "release: $version"
+  git -C "$d" tag "$tag"
+  if [ "$merge" = squash ]; then
+    git -C "$d" checkout -q master
+    write_manifest "$d" "$version" "$ghversion"
+    git -C "$d" add -A
+    git -C "$d" commit -q -m "release: $version (squashed)"
+  fi
+  # merge=no deliberately leaves the checkout ON the release branch: the gate
+  # reads the manifest out of the working tree, and CI runs it with the tag
+  # checked out. Leaving it on master would test master's manifest against the
+  # branch's tag, which is a different (and always failing) question.
+}
+
+# The ordinary case: tag pushed from the branch, bump correct.
+onbranch="$(make_repo onbranch "0.2.0:2:v0.2.0:root")"
+cut_on_branch "$onbranch" 0.3.0 3 v0.3.0 no
+expect_ok "tag on an unmerged branch, ghVersion increased" "$onbranch" v0.3.0 "OK"
+
+# THE regression. v0.3.0 was cut on a branch and squash-merged, so it is not in
+# master's history; v0.4.0 then forgets to bump past it. A reachability lookup
+# finds v0.2.0 and waves 3 > 2 through, stranding every user who took v0.3.0.
+squashed="$(make_repo squashed "0.2.0:2:v0.2.0:root")"
+cut_on_branch "$squashed" 0.3.0 3 v0.3.0 squash
+cut_on_branch "$squashed" 0.4.0 3 v0.4.0 no
+expect_fail "ghVersion not bumped past a squash-merged previous tag" "$squashed" v0.4.0 "ghVersion"
+
+# Gating before the tag exists — what a maintainer runs locally to check the
+# bump before pushing anything. The lookup must still find the previous tag;
+# reporting "first release" here is a skip dressed up as reassurance.
+pretag="$(make_repo pretag "0.2.0:2:v0.2.0:root" "0.3.0:2::root")"
+expect_fail "ghVersion not bumped, gated before the tag exists" "$pretag" v0.3.0 "ghVersion"
+
+# The sort must be version-aware, not lexical: descending ASCII puts v0.9.0
+# above v0.10.0, which would compare this release against the wrong one and let
+# a stale ghVersion through.
+tenth="$(make_repo tenth "0.9.0:9:v0.9.0:root" "0.10.0:10:v0.10.0:root")"
+cut_on_branch "$tenth" 0.11.0 10 v0.11.0 no
+expect_fail "v0.10.0 outranks v0.9.0 in the previous-tag lookup" "$tenth" v0.11.0 "ghVersion"
+
 if [ "$fails" -ne 0 ]; then
   echo "$fails check-release.sh test(s) failed"
   exit 1
