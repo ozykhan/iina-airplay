@@ -325,3 +325,12 @@ test("the poll restores mute after the helper dies on its own", () => {
   assert.equal(p.flags.mute, false);
   assert.equal(p.state().sync, null);
 });
+
+test("restarting a cast after a helper-initiated teardown does not corrupt the saved mute", () => {
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  p.helperSays({ event: "stopped" });   // teardown lands off-main: only state mutates
+  p.send("start", {});                   // restart before any getState poll ran
+  p.send("stop", {});
+  assert.equal(p.flags.mute, false, "savedMute must come from the user's real pre-cast value");
+});

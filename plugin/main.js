@@ -311,6 +311,10 @@ if (typeof iina !== "undefined") {
   }
 
   function startCast() {
+    reapMirror(); // a helper-initiated teardown may have left a stale mirror
+                  // un-reaped (only the getState poll normally does that); a
+                  // restart must not let newMirror() capture that stale
+                  // savedMute instead of the user's real pre-cast value.
     if (state.phase === "starting" || state.phase === "ready" || state.phase === "packaged") return;
     var src = normalizeSource(mpv.getString("path"));
     if (!src) {
