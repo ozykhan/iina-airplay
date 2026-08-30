@@ -1,33 +1,49 @@
 # iina-airplay
 
-An [IINA](https://github.com/iina/iina) plugin that gets the file IINA is playing
-onto an Apple TV. IINA cannot AirPlay its own video output — it renders through
-mpv into a Metal/OpenGL layer, and macOS only exposes AirPlay video sending
-through AVFoundation. So this is a **handoff, not a mirror**: the plugin remuxes
-(or, when needed, transcodes) the current file to a live HLS stream with a Go
-supervisor driving `ffmpeg`, serves it on the LAN, and a hidden `<video>` element
-in the sidebar hands the stream URL to the TV through WebKit's own AirPlay picker.
-IINA stays the remote control, literally: the player keeps running muted as a
-mirror, so IINA's own play/pause/seek drive the Apple TV, and pausing or seeking
-from the TV remote comes back the other way. See `docs/feasibility.md` for the
-full reasoning and the format-handling matrix.
+**Cast what IINA is playing straight to your Apple TV.** No screen mirroring, no
+re-encode — the plugin hands the file to the TV, and IINA stays the remote.
 
-**Status:** shipping. The cast UI is a sidebar tab showing packaging progress,
-the stream's state, and what happened to your subtitles. Text subtitles (embedded
-or external SRT/ASS; the track selected in IINA) are carried as a WebVTT rendition
-the TV shows via its own subtitle menu. ASS styling is flattened to plain text;
-image subs (PGS/DVD) can't be cast and are dropped with a notice — burn-in is a
-possible future round.
+<img src="https://github.com/user-attachments/assets/57781b27-13fe-4c9a-a96c-7818986025c0" width="800" height="365" alt="The iina-airplay sidebar casting to an Apple TV">
 
-`v0.2.0` is published and installs through IINA by repo slug. The package
-(`.iinaplgz`, pinned static ffmpeg, ad-hoc-signed helper) is built by `make pack`,
-verified by `packaging/verify.sh`, and `v0.1.0` was **installed from the published
-release and cast to a real Apple TV** — so the Gatekeeper assumption the whole
-design rests on holds in practice, not just on paper. CI builds, verifies and
-remux-tests the package on both Apple Silicon and Intel runners and attaches it to
-a draft release. `docs/releasing.md` has the runbook, including the trap that cost
-`v0.2.0` its audience: IINA's *update* check reads `Info.json` from the root of
-`master`, never from the release, so a flawless release can still reach nobody.
+<sub>Demo footage: _Sintel_ © [Blender Foundation](https://durian.blender.org), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).</sub>
+
+```
+IINA → Settings → Plugins → Install → ozykhan/iina-airplay
+```
+
+macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downloads at runtime
+
+- **The picture is the file.** Remux-first, so in the normal case the TV plays the
+  original bitstream bit-for-bit. Only unusual codecs get re-encoded, through VideoToolbox.
+- **IINA is the remote, both ways.** Play, pause and seek in IINA drive the Apple TV;
+  the Siri Remote comes back the other way.
+- **Your subtitles come along.** The text track you selected in IINA (embedded or
+  external SRT/ASS) is carried as a WebVTT rendition the TV shows through its own menu.
+- **Nothing to install first.** A pinned LGPL ffmpeg build and a small Go helper ship
+  inside the package. No Homebrew, no runtime downloads, works offline.
+
+### Limits, up front
+
+|                 |                                                                                                                             |
+| --------------- | --------------------------------------------------------------------------------------------------------------------------- |
+| macOS 15+       | Grant IINA the **Local Network** permission on first cast, or the TV can't reach the stream                                 |
+| Image subtitles | PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work                                                    |
+| Start position  | Playback starts at the beginning of the file, not your current position — the trade for a fully seekable timeline on the TV |
+
+<details>
+<summary><b>Why this is a handoff and not a mirror</b></summary>
+
+IINA cannot AirPlay its own video output: it renders through mpv into a
+Metal/OpenGL layer, and macOS only exposes AirPlay video sending through
+AVFoundation. So instead of mirroring the window, the plugin remuxes (or, when
+needed, transcodes) the current file to a live HLS stream with a Go supervisor
+driving `ffmpeg`, serves it on the LAN, and a hidden `<video>` element in the
+sidebar hands the stream URL to the TV through WebKit's own AirPlay picker. The
+player keeps running muted as a mirror, which is what makes the two-way remote
+control work. `docs/feasibility.md` has the full reasoning and the format-handling
+matrix.
+
+</details>
 
 ## Install
 
