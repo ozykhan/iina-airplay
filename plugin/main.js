@@ -96,6 +96,85 @@ function normalizeSource(p) {
   try { return decodeURIComponent(rest); } catch (e) { return rest; }
 }
 
+// ---- muted-mirror sync core (spec: docs/superpowers/specs/2026-08-30-native-controls-mirror-design.md) ----
+// The TV is the clock; mpv is the mirror. AirPlay HLS runs seconds behind any
+// local clock, so mpv's position is never authoritative during a cast. These
+// functions are pure — they take the mirror bookkeeping object plus
+// observations and return new state/actions without touching IINA APIs — so
+// node tests can drive every branch.
+
+var DRIFT_TOLERANCE = 1.5; // seconds of mpv/TV divergence tolerated before correcting
+var ECHO_WINDOW_MS = 2000; // how long our own time-pos set may echo back as an mpv seek event
+
+function newMirror(startPos, savedMute, paused) {
+  return {
+    seq: 0,               // last issued command sequence number
+    paused: paused,       // desired TV pause state (follows mpv)
+    seekTo: null,         // pending user seek {seq, pos}; cleared when the page acks it
+    startPos: startPos,   // where IINA was at cast start; the page best-effort seeks the TV here
+    savedMute: savedMute, // mpv mute flag to restore on teardown
+    expectMpvPause: null, // swallow the next pause.changed that echoes our own mpv.set
+    lastSetPos: null,     // {pos, at} of our last programmatic time-pos set (echo suppression)
+  };
+}
+
+// mpv's pause flag changed. Bumps seq only for user-initiated changes; an
+// expected echo of our own mpv.set(pause) must not become a command back to
+// the TV, or TV-remote pauses would ping-pong.
+function mirrorOnMpvPause(m, mpvPaused) {
+  var n = Object.assign({}, m);
+  if (m.expectMpvPause !== null && mpvPaused === m.expectMpvPause) {
+    n.expectMpvPause = null;
+    return n;
+  }
+  n.expectMpvPause = null;
+  if (mpvPaused !== m.paused) {
+    n.paused = mpvPaused;
+    n.seq = m.seq + 1;
+  }
+  return n;
+}
+
+// mpv seeked. A seek near our own recent time-pos set is drift correction
+// echoing back, not the user; anything else becomes a TV seek command.
+// seekTo carries its own seq so the page never re-applies a seek it has
+// already performed when a later pause command bumps the outer seq.
+function mirrorOnMpvSeek(m, mpvPos, now) {
+  var n = Object.assign({}, m);
+  if (m.lastSetPos !== null &&
+      now - m.lastSetPos.at < ECHO_WINDOW_MS &&
+      Math.abs(mpvPos - m.lastSetPos.pos) <= DRIFT_TOLERANCE) {
+    n.lastSetPos = null;
+    return n;
+  }
+  n.seq = m.seq + 1;
+  n.seekTo = { seq: n.seq, pos: mpvPos };
+  return n;
+}
+
+// The page reported TV state. Decides what (if anything) to push into mpv.
+// While commands are in flight (appliedSeq < seq) the TV state is stale, so
+// nothing is reconciled against it — not even drift.
+function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
+  var out = { m: m, setMpvPos: null, setMpvPaused: null, teardown: false };
+  if (tvState.ended) { out.teardown = true; return out; }
+  if (!tvState.wireless) return out;      // nothing on the TV yet: no clock to follow
+  if (tvState.appliedSeq < m.seq) return out;
+  var n = Object.assign({}, m);
+  if (m.seekTo !== null) n.seekTo = null; // acked
+  if (tvState.paused !== m.paused) {      // TV-remote initiated: mirror into mpv
+    n.paused = tvState.paused;
+    n.expectMpvPause = tvState.paused;
+    out.setMpvPaused = tvState.paused;
+  }
+  if (Math.abs(mpvPos - tvState.pos) > DRIFT_TOLERANCE) {
+    out.setMpvPos = tvState.pos;
+    n.lastSetPos = { pos: tvState.pos, at: now };
+  }
+  out.m = n;
+  return out;
+}
+
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
@@ -104,6 +183,12 @@ if (typeof module !== "undefined") {
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
+    newMirror: newMirror,
+    mirrorOnMpvPause: mirrorOnMpvPause,
+    mirrorOnMpvSeek: mirrorOnMpvSeek,
+    mirrorOnTvState: mirrorOnTvState,
+    DRIFT_TOLERANCE: DRIFT_TOLERANCE,
+    ECHO_WINDOW_MS: ECHO_WINDOW_MS,
   };
 }
 
