@@ -43,8 +43,11 @@ publish one that does not.
    `.sha256` sidecar, and notes naming the FFmpeg version, upstream source URL
    and source SHA-256 — that last part is the LGPL obligation, not decoration.
 
-6. **Publish it.** Drafts are invisible to `api.github.com/.../releases/latest`,
-   so nothing reaches users until this click.
+6. **Publish it.** The publish dialog offers two checkboxes — leave **Set as
+   a pre-release** unchecked, and confirm **Set as the latest release** is
+   checked. Either one wrong and `api.github.com/.../releases/latest` skips
+   this release exactly as it skips a draft: every check stays green, the
+   release page looks fine, and nothing reaches users.
 
 7. **Install it the way a stranger would.** IINA → Settings → Plugins →
    Install → `ozykhan/iina-airplay`. Not the local-package path — the point is
@@ -57,6 +60,42 @@ publish one that does not.
    ```
 
    Expect `com.apple.provenance` at most, and never `com.apple.quarantine`.
+
+## If the `release` job fails
+
+Its first-ever run is the real `v0.1.0` tag — neither a PR nor a
+`workflow_dispatch` run ever reaches it, so a failure here is not a surprise,
+it is simply the first time this code has run at all.
+
+The `.iinaplgz` is safe regardless: `build` uploads it as a workflow artifact
+before `release` ever starts, and that artifact survives `release` failing.
+
+Try re-running just the failed job first: `gh run rerun <run-id> --failed`
+(or the Actions UI's "Re-run failed jobs"). `build` and `verify-intel`
+already succeeded, so this replays only `release`.
+
+If that does not resolve it, publish by hand from the artifact:
+
+```sh
+gh run download <run-id> --name iina-airplay-package --dir dist
+./packaging/release-notes.sh dist/iina-airplay.iinaplgz > notes.md
+gh release create v0.1.0 \
+  --draft \
+  --title v0.1.0 \
+  --notes-file notes.md \
+  --repo ozykhan/iina-airplay \
+  dist/iina-airplay.iinaplgz \
+  dist/iina-airplay.iinaplgz.sha256
+```
+
+That lands in the same draft state the automated job aims for — pick up at
+step 5 above.
+
+Re-running the workflow on a tag whose release already exists fails with
+"release already exists". That is expected, not a new problem: `release`
+makes no attempt to replace a prior attempt. Either delete the existing
+release (or draft) first, or attach the missing asset to it with
+`gh release upload`.
 
 ## Rebuilding without releasing
 
