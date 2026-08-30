@@ -3,8 +3,8 @@
 **Cast what IINA is playing straight to your Apple TV.** No screen mirroring, no
 re-encode — the plugin hands the file to the TV, and IINA stays the remote.
 
-<img src="https://github.com/user-attachments/assets/57781b27-13fe-4c9a-a96c-7818986025c0" width="800" height="365"
-     alt="The iina-airplay sidebar casting to an Apple TV">
+<img src="https://github.com/user-attachments/assets/57781b27-13fe-4c9a-a96c-7818986025c0" width="800" height="365" alt="The iina-airplay sidebar casting to an Apple TV">
+
 <sub>Demo footage: _Sintel_ © [Blender Foundation](https://durian.blender.org), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).</sub>
 
 ```
