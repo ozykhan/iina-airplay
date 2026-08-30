@@ -10,7 +10,8 @@ TMP="$(mktemp -d)"
 trap 'rm -rf "$TMP"' EXIT
 fails=0
 
-# verify.sh compares the package's plugin files against $VERIFY_SRC_ROOT/... to
+# verify.sh compares the package's plugin files against $VERIFY_SRC_ROOT/... and
+# its manifest against $VERIFY_MANIFEST_ROOT/Info.json (the repo root) to
 # catch a stale pack (see FIX 1/2). Every synthetic fixture below is a fake
 # plugin, not this repo's real one, so it would spuriously fail that check
 # against this repo's actual plugin/ tree. Point it at a directory that does
@@ -50,7 +51,7 @@ JSON
 
 expect_fail() {
   local label="$1" pkg="$2" pattern="$3" out
-  out="$(VERIFY_SRC_ROOT="$DUMMY_SRC_ROOT" "$VERIFY" "$pkg" 2>&1)"
+  out="$(VERIFY_SRC_ROOT="$DUMMY_SRC_ROOT" VERIFY_MANIFEST_ROOT="$DUMMY_SRC_ROOT" "$VERIFY" "$pkg" 2>&1)"
   if [ $? -eq 0 ]; then
     echo "FAIL: $label — verify.sh accepted a package it should have rejected"
     fails=$((fails + 1))
@@ -140,7 +141,7 @@ cat > "$stale_root/Info.json" <<'JSON'
 JSON
 echo "// authoritative source — deliberately different from the packaged main.js" > "$stale_root/main.js"
 stale_pkg="$(make_pkg stale noop)"
-stale_out="$(VERIFY_SRC_ROOT="$stale_root" "$VERIFY" "$stale_pkg" 2>&1)"
+stale_out="$(VERIFY_SRC_ROOT="$stale_root" VERIFY_MANIFEST_ROOT="$stale_root" "$VERIFY" "$stale_pkg" 2>&1)"
 if [ $? -eq 0 ]; then
   echo "FAIL: stale main.js — verify.sh accepted a package built from different source"
   fails=$((fails + 1))
@@ -168,7 +169,7 @@ JSON
 echo "// authoritative source — deliberately different from the packaged main.js" > "$partial_root/main.js"
 # deliberately no sidebar.html in $partial_root
 partial_pkg="$(make_pkg partial noop)"
-partial_out="$(VERIFY_SRC_ROOT="$partial_root" "$VERIFY" "$partial_pkg" 2>&1)"
+partial_out="$(VERIFY_SRC_ROOT="$partial_root" VERIFY_MANIFEST_ROOT="$partial_root" "$VERIFY" "$partial_pkg" 2>&1)"
 partial_status=$?
 # Match the specific main.js-mismatch failure, not a bare "stale" substring —
 # the pre-fix skip note itself says "skipping the stale-package comparison",
@@ -191,6 +192,45 @@ else
   echo "ok: a stale main.js is caught even when sidebar.html is absent from the source tree"
 fi
 
+# --- staleness: the manifest lives at the REPO root, the payload under plugin/
+# Info.json moved to the repository root because IINA's update check fetches
+# raw.githubusercontent.com/<ghRepo>/master/Info.json. That split the one
+# source tree verify.sh used to compare against into two, and the dangerous
+# outcome is not a loud error but a SILENT one: with the manifest no longer
+# under $VERIFY_SRC_ROOT, the per-file "not found — skipping" branch (which
+# legitimately exists for packages verified outside a checkout) would excuse
+# Info.json from the staleness comparison entirely, and a package carrying a
+# stale manifest would verify clean. Assert the two roots are consulted
+# independently.
+mroot="$TMP/manifest-root"
+sroot="$TMP/payload-root"
+mkdir -p "$mroot" "$sroot"
+# The payload matches the package byte-for-byte...
+echo "// plugin" > "$sroot/main.js"
+echo "<html></html>" > "$sroot/sidebar.html"
+# ...while the manifest deliberately does not (ghVersion 2, package has 1).
+cat > "$mroot/Info.json" <<'JSON'
+{"name":"AirPlay","identifier":"dev.faruk.iina-airplay","version":"0.2.0",
+ "ghRepo":"ozykhan/iina-airplay","ghVersion":2,"entry":"main.js","permissions":[]}
+JSON
+split_pkg="$(make_pkg splitroots noop)"
+split_out="$(VERIFY_SRC_ROOT="$sroot" VERIFY_MANIFEST_ROOT="$mroot" "$VERIFY" "$split_pkg" 2>&1)"
+split_status=$?
+if [ "$split_status" -eq 0 ]; then
+  echo "FAIL: split roots — verify.sh accepted a package whose Info.json does not match the repo-root manifest"
+  fails=$((fails + 1))
+elif grep -qi "Info.json not found; skipping" <<<"$split_out"; then
+  echo "FAIL: split roots — Info.json was skipped instead of compared against the repo-root manifest:"
+  echo "$split_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+elif ! grep -qi "Info.json in the package does not match" <<<"$split_out"; then
+  echo "FAIL: split roots — rejected, but not for the expected Info.json mismatch:"
+  echo "$split_out" | sed 's/^/    /'
+  fails=$((fails + 1))
+else
+  echo "ok: a stale Info.json is caught against the repo-root manifest, not the plugin payload tree"
+fi
+
 # --- a native-x86_64 host runs no Rosetta pass --------------------------------
 # On Intel the x86_64 slice IS the native slice, so a second pass through
 # `arch -x86_64` re-runs identical assertions under a different label and reads
@@ -202,7 +242,7 @@ fi
 # BEFORE running any slice check, or a failing native pass would exit first and
 # leave no record of whether x86_64 was covered.
 arch_pkg="$(make_pkg archnote fake_ffmpeg_binary)"
-arch_out="$(VERIFY_SRC_ROOT="$DUMMY_SRC_ROOT" VERIFY_HOST_ARCH=x86_64 "$VERIFY" "$arch_pkg" 2>&1)"
+arch_out="$(VERIFY_SRC_ROOT="$DUMMY_SRC_ROOT" VERIFY_MANIFEST_ROOT="$DUMMY_SRC_ROOT" VERIFY_HOST_ARCH=x86_64 "$VERIFY" "$arch_pkg" 2>&1)"
 if grep -q 'skipping the redundant Rosetta pass' <<<"$arch_out"; then
   echo "ok: native-x86_64 host announces that it skips the Rosetta pass"
 else

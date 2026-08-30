@@ -7,7 +7,7 @@ publish one that does not.
 
 ## Cutting a release
 
-1. **Bump both numbers in `plugin/Info.json`.**
+1. **Bump both numbers in `Info.json` — the one at the repository root.**
 
    - `version` — the semver string, e.g. `0.2.0`. The tag must be `v` + this.
    - `ghVersion` — an **Int**, a monotonic counter. **Not** the semver string.
@@ -17,6 +17,9 @@ publish one that does not.
    simply never reaches anyone who already has the plugin, because IINA's update
    check compares this number. `packaging/check-release.sh` refuses a tag that
    does not increase it — but only once a previous tag exists.
+
+   The manifest's **location** is load-bearing for the same reason, and cost a
+   release to learn — see "Two mechanisms" below.
 
 2. **Commit, then tag and push.**
 
@@ -60,6 +63,43 @@ publish one that does not.
    ```
 
    Expect `com.apple.provenance` at most, and never `com.apple.quarantine`.
+
+## Two mechanisms, two URLs
+
+Installing and updating are separate paths in IINA, and satisfying one does not
+satisfy the other. Both must be right or the release reaches nobody.
+
+| | What IINA fetches | Satisfied by |
+| --- | --- | --- |
+| **Install** by slug | `api.github.com/repos/<ghRepo>/releases/latest`, first asset ending `.iinaplgz` | the published release + its asset |
+| **Update check** | `raw.githubusercontent.com/<ghRepo>/master/Info.json` | `Info.json` **committed at the repo root of `master`** |
+| **Update download** | back to `releases/latest` | the same asset |
+
+The update check never looks at releases. It reads `ghVersion` out of the
+manifest sitting at the **root of the `master` branch**, and only if that number
+is higher does it then go fetch the `.iinaplgz`.
+
+This is why `Info.json` lives at the repository root rather than under
+`plugin/`, and why `packaging/pack.sh` copies it from there into the package.
+While it lived under `plugin/` that URL 404'd, and IINA 1.4.4 folds a failed
+fetch and "no newer version" into the same branch
+(`JavascriptPlugin.swift`, `checkForUpdates`) — so `v0.2.0` published perfectly,
+passed every check, and still reported **"No update found."** to anyone running
+`v0.1.0`. Nothing in the release was wrong; the manifest was simply not where
+IINA looks.
+
+Two consequences worth keeping in mind:
+
+- **The update beacon is branch state, not release state.** A manifest fix
+  reaches existing users on a plain push to `master` — no new tag, no rebuild.
+- **`master` must carry the bumped `ghVersion`.** Tagging a release whose
+  manifest never lands on `master` leaves the update check reading the old
+  number, however correct the release page looks.
+
+`plugin/Info.json` is a gitignored symlink created by `make dev`, because a
+plugin directory must carry its own manifest for IINA to load it. Never commit
+it: `raw.githubusercontent.com` serves a symlink's target path as text, so the
+update check would parse `../Info.json` instead of JSON.
 
 ## If the `release` job fails
 

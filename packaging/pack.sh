@@ -8,7 +8,11 @@ FFMPEG="$ROOT/build/ffmpeg/ffmpeg"
 FFVERSION="$ROOT/build/ffmpeg/VERSION"
 FFLICENSE="$ROOT/build/ffmpeg/src/COPYING.LGPLv2.1"
 HELPER="$ROOT/build/helper/airplay-helper"
-PLUGIN_INFO="$ROOT/plugin/Info.json"
+# The manifest lives at the repository root, not under plugin/: IINA's update
+# check fetches raw.githubusercontent.com/<ghRepo>/master/Info.json. It is
+# staged into the PACKAGE root alongside plugin/main.js, so the package layout
+# is unchanged — only where the manifest is read from.
+PLUGIN_INFO="$ROOT/Info.json"
 PLUGIN_MAIN="$ROOT/plugin/main.js"
 PLUGIN_SIDEBAR="$ROOT/plugin/sidebar.html"
 CANONICAL_PKG="$ROOT/build/iina-airplay.iinaplgz"

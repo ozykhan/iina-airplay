@@ -4,5 +4,8 @@ dist/
 *.zip
 /tmp-hls/
 plugin/bin/
+# Symlink to the root Info.json, created by `make dev` so IINA can load the
+# plugin directory. The manifest itself is versioned at the repository root.
+plugin/Info.json
 build/
 helper/helper

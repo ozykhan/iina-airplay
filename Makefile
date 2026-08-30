@@ -16,6 +16,7 @@ test:
 	./packaging/tests/verify.test.sh
 	./packaging/tests/zip-plugin.test.sh
 	./packaging/tests/check-release.test.sh
+	./packaging/tests/pack-paths.test.sh
 	./packaging/tests/release-notes.test.sh
 
 # The gate on the configure line, run against the artifact that ships rather
@@ -25,14 +26,22 @@ test-package:
 
 # Dev loop: helper from source, brew ffmpeg standing in for the bundled one,
 # plugin symlinked into IINA. Restart IINA to pick up JS changes.
+# Info.json lives at the repo root (IINA's update check reads it there), but a
+# plugin DIRECTORY must carry its own manifest for IINA to load it at all — and
+# the dev link points at plugin/. Symlink it in rather than keeping a second
+# copy: one file stays authoritative, and plugin/Info.json is gitignored so the
+# link never gets committed. A committed symlink would be worse than useless
+# here — raw.githubusercontent.com serves a symlink's target path as text, so
+# IINA's update check would parse "../Info.json" instead of JSON.
 dev: helper
 	ln -sf /opt/homebrew/bin/ffmpeg plugin/bin/ffmpeg
+	ln -sf ../Info.json plugin/Info.json
 	mkdir -p build
 	ln -sfn ../plugin $(DEVLINK)
 	$(IINA_PLUGIN) link $(DEVLINK)
 
 clean:
-	rm -rf plugin/bin build
+	rm -rf plugin/bin build plugin/Info.json
 
 # Builds the pinned LGPL ffmpeg. Slow the first time (tens of minutes) and a
 # no-op afterwards until packaging/build-ffmpeg.sh changes.

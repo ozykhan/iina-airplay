@@ -11,6 +11,14 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # against the real plugin/ sources that happen to live next to this script.
 SRC_ROOT="${VERIFY_SRC_ROOT:-$ROOT/plugin}"
 
+# The manifest is NOT under plugin/ — it lives at the repository root, because
+# IINA's update check fetches raw.githubusercontent.com/<ghRepo>/master/Info.json.
+# pack.sh copies it from there into the package root, so the staleness check has
+# to compare it against the root, not against SRC_ROOT. Kept a separate knob
+# rather than folded into SRC_ROOT so the tests can point the two independently
+# and prove the manifest is genuinely compared instead of quietly skipped.
+MANIFEST_ROOT="${VERIFY_MANIFEST_ROOT:-$ROOT}"
+
 # Overridable so packaging/tests/verify.test.sh can exercise the x86_64-native
 # path from an arm64 machine, the same way VERIFY_SRC_ROOT lets it isolate the
 # staleness check. Nothing outside the tests should set it.
@@ -93,11 +101,17 @@ entry="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])
 # available (it may legitimately not be — this script also verifies packages
 # downloaded standalone, outside a repo checkout).
 for rel in "$entry" sidebar.html Info.json; do
-  if [ -f "$SRC_ROOT/$rel" ]; then
-    cmp -s "$TMP/$rel" "$SRC_ROOT/$rel" \
-      || fail "$rel in the package does not match $SRC_ROOT/$rel — the package is stale; re-run packaging/pack.sh"
+  # Two source roots, because the package root flattens two repo locations:
+  # the manifest comes from the repository root, the payload from plugin/.
+  case "$rel" in
+    Info.json) src="$MANIFEST_ROOT/$rel" ;;
+    *)         src="$SRC_ROOT/$rel" ;;
+  esac
+  if [ -f "$src" ]; then
+    cmp -s "$TMP/$rel" "$src" \
+      || fail "$rel in the package does not match $src — the package is stale; re-run packaging/pack.sh"
   else
-    echo "verify: note — $SRC_ROOT/$rel not found; skipping its stale-package comparison (expected when verifying a package outside a repo checkout)" >&2
+    echo "verify: note — $src not found; skipping its stale-package comparison (expected when verifying a package outside a repo checkout)" >&2
   fi
 done
 
