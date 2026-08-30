@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource } = require("../main.js");
+const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -162,4 +162,51 @@ test("isValidPid accepts positive finite numbers only", () => {
   assert.equal(isValidPid(undefined), false);
   assert.equal(isValidPid(null), false);
   assert.equal(isValidPid("1234"), false);
+});
+
+test("subtitleLabel names the track by language", () => {
+  const tracks = selectTracks([
+    { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
+    { type: "audio", selected: true, codec: "aac", "ff-index": 1 },
+    { type: "sub", selected: true, codec: "subrip", "ff-index": 2, lang: "eng" },
+  ]);
+  assert.deepEqual(subtitleLabel(tracks), { label: "Subtitles: eng", warn: false });
+});
+
+test("subtitleLabel falls back to the track title, then to On", () => {
+  const base = [
+    { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
+    { type: "audio", selected: true, codec: "aac", "ff-index": 1 },
+  ];
+  const titled = selectTracks(base.concat([
+    { type: "sub", selected: true, codec: "subrip", "ff-index": 2, title: "Forced" },
+  ]));
+  assert.equal(subtitleLabel(titled).label, "Subtitles: Forced");
+
+  const bare = selectTracks(base.concat([
+    { type: "sub", selected: true, codec: "subrip", "ff-index": 2 },
+  ]));
+  assert.equal(subtitleLabel(bare).label, "Subtitles: On");
+});
+
+test("subtitleLabel warns when the subtitle track was dropped", () => {
+  const tracks = selectTracks([
+    { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
+    { type: "audio", selected: true, codec: "aac", "ff-index": 1 },
+    { type: "sub", selected: true, codec: "hdmv_pgs_subtitle", "ff-index": 2 },
+  ]);
+  assert.deepEqual(subtitleLabel(tracks),
+    { label: "Subtitles not supported", warn: true });
+});
+
+test("subtitleLabel reports no subtitles when none is selected", () => {
+  const tracks = selectTracks([
+    { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
+    { type: "audio", selected: true, codec: "aac", "ff-index": 1 },
+  ]);
+  assert.deepEqual(subtitleLabel(tracks), { label: "No subtitles", warn: false });
+});
+
+test("subtitleLabel is empty when there are no castable tracks", () => {
+  assert.deepEqual(subtitleLabel(null), { label: "", warn: false });
 });

@@ -44,6 +44,17 @@ function selectTracks(trackList) {
   return r;
 }
 
+// selectTracks already decided what happens to subtitles; this just names the
+// decision for the sidebar. Before the redesign that answer existed only as a
+// one-shot OSD flash, which vanished before it could be read.
+function subtitleLabel(tracks) {
+  if (!tracks) return { label: "", warn: false };
+  if (tracks.subDropped) return { label: "Subtitles not supported", warn: true };
+  if (!tracks.sub) return { label: "No subtitles", warn: false };
+  return { label: "Subtitles: " + (tracks.sub.lang || tracks.sub.title || "On"),
+           warn: false };
+}
+
 function parseHelperEvents(buffer, chunk) {
   var data = buffer + chunk;
   var lines = data.split("\n");
@@ -183,6 +194,7 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
+    subtitleLabel: subtitleLabel,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
     isValidPid: isValidPid,
@@ -221,8 +233,16 @@ if (typeof iina !== "undefined") {
   // Every post to the page goes through this so the page always sees the live
   // sync block alongside the pipeline state.
   function stateForPage() {
+    // duration and subs are derived here, not stored on `state`: selectTracks
+    // otherwise runs only at cast start, so a stored label would be empty
+    // before the first cast — exactly when the user is deciding whether to
+    // cast — and would go stale if the subtitle track changed mid-session.
+    // Safe to read mpv here: every caller is a sidebar.onMessage handler,
+    // which IINA runs on the main thread.
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      duration: mpv.getNumber("duration") || 0,
+      subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
       sync: mirror === null ? null : {
         seq: mirror.seq, paused: mirror.paused,
         seekTo: mirror.seekTo, startPos: mirror.startPos,
