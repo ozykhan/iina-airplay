@@ -1,7 +1,9 @@
 IINA_PLUGIN := /Applications/IINA.app/Contents/MacOS/iina-plugin
 DEVLINK := build/iina-airplay.iinaplugin-dev
 
-.PHONY: helper test dev clean ffmpeg pack verify test-bundled
+.PHONY: helper test test-package dev clean ffmpeg pack verify test-bundled
+
+PKG := $(CURDIR)/build/iina-airplay.iinaplgz
 
 BUNDLED_FFMPEG := $(CURDIR)/build/ffmpeg/ffmpeg
 
@@ -12,6 +14,13 @@ test:
 	cd helper && go test ./...
 	node --test 'plugin/tests/**/*.test.mjs'
 	./packaging/tests/verify.test.sh
+	./packaging/tests/zip-plugin.test.sh
+	./packaging/tests/check-release.test.sh
+
+# The gate on the configure line, run against the artifact that ships rather
+# than against build/ffmpeg/ffmpeg. Both CI jobs run exactly this.
+test-package:
+	./packaging/test-package.sh $(PKG)
 
 # Dev loop: helper from source, brew ffmpeg standing in for the bundled one,
 # plugin symlinked into IINA. Restart IINA to pick up JS changes.
@@ -36,11 +45,12 @@ test-bundled:
 	cd helper && IINA_AIRPLAY_FFMPEG=$(BUNDLED_FFMPEG) go test ./...
 
 pack:
-	rm -f build/iina-airplay.iinaplgz
+	rm -f $(PKG)
 	$(MAKE) ffmpeg
 	./packaging/build-helper.sh
 	./packaging/pack.sh
-	./packaging/verify.sh build/iina-airplay.iinaplgz
+	./packaging/verify.sh $(PKG)
+	./packaging/test-package.sh $(PKG)
 
 verify:
-	./packaging/verify.sh build/iina-airplay.iinaplgz
+	./packaging/verify.sh $(PKG)
