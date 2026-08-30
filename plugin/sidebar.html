@@ -96,6 +96,7 @@
     box-shadow: none; cursor: default; opacity: 0.6; }
   button:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
   .hide { display: none; }
+  #meter.hide { display: none; }
 
   @media (prefers-reduced-motion: reduce) { #fill { transition: none; } }
 </style>
@@ -298,7 +299,7 @@
   primary.onclick = function () {
     if (primaryAct === "pick") showPicker();
     else if (primaryAct === "stop") { teardownLocal(); iina.postMessage("stop", {}); }
-    else { localErr = ""; iina.postMessage("start", {}); }
+    else { teardownLocal(); iina.postMessage("start", {}); }
   };
   secondary.onclick = function () {
     // "Send to another TV" while playing; "Cancel"/"Stop casting" otherwise.
