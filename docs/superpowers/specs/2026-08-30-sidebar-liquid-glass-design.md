@@ -75,10 +75,22 @@ screen. The accent stays present in the progress bar.
 | --- | --- | --- | --- | --- | --- | --- |
 | `idle` | none | Not casting | subtitle label | hidden | Start casting (accent) | none |
 | `starting` | amber | Packaging | subtitle label | `pct` | Send to TV (disabled) | Cancel |
-| `ready`/`packaged`, no devices | none | Ready to send | Waiting for AirPlay devices | full, neutral | Send to TV (disabled) | Stop casting |
-| `ready`/`packaged` | none | Ready to send | subtitle label | full, neutral | Send to TV (accent) | Stop casting |
+| `ready`, no devices | none | Ready to send | Waiting for AirPlay devices | `pct` | Send to TV (disabled) | Stop casting |
+| `ready` | none | Ready to send | subtitle label | `pct` | Send to TV (accent) | Stop casting |
+| `packaged`, no devices | none | Ready to send | Waiting for AirPlay devices | full, neutral | Send to TV (disabled) | Stop casting |
+| `packaged` | none | Ready to send | subtitle label | full, neutral | Send to TV (accent) | Stop casting |
 | on TV (`onTV` true) | green | Playing on TV | subtitle label | elapsed / duration | Stop casting (neutral) | Send to another TV |
 | `error` | red | Couldn't cast | `state.msg` | hidden | Try again (accent) | none |
+
+`ready` and `packaged` are two different moments, and the bar must not
+conflate them. The helper emits `ready` as soon as the first HLS segments
+exist (`helper/main.go`, polled every 200ms) and keeps emitting `progress`
+until the whole file is remuxed; `packaged` arrives only at the end. On a
+feature-length file that gap is minutes. So the bar tracks real packaging
+progress and the elapsed slot shows the live percentage until the phase is
+actually `packaged`. Readiness is carried by the "Ready to send" headline
+and the enabled button, which is what the user acts on — the stream is
+playable from `ready` onward.
 
 "On TV" is a page-local condition (`webkitCurrentPlaybackTargetIsWireless`),
 not a helper phase; it overrides the `ready`/`packaged` rows when true.
