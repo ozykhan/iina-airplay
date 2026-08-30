@@ -78,7 +78,7 @@ a problem — it just tells the maintainer what to check before merging.
 | `plugin/` | The IINA plugin: `main.js` (JSContext) and `sidebar.html` (the cast UI webview) |
 | `helper/` | The Go supervisor — spawns `ffmpeg`, serves HLS, watchdog, playlist |
 | `packaging/` | `build-ffmpeg.sh`, `pack.sh`, `verify.sh` and the release gates |
-| `docs/` | Design reasoning, the prototype record, the release runbook |
+| `docs/` | Design reasoning, the prototype record, the distribution design, the release runbook |
 | `Info.json` | The plugin manifest — **at the repo root**, see below |
 
 ## Constraints that bite newcomers
@@ -160,10 +160,10 @@ The bug report template asks for all of this.
 
 ## Scope
 
-Reasonable additions: format coverage, subtitle handling, seeking, playlist
-behaviour, packaging robustness, tests. Things that are out of scope by design:
-native code in the plugin, mirroring IINA's actual video output, and anything
-that makes the common path re-encode when it could remux.
+Reasonable additions: format coverage, subtitle handling (PGS burn-in is the
+open one), playlist behaviour, packaging robustness, tests. Things that are out
+of scope by design: native code in the plugin, mirroring IINA's actual video
+output, and anything that makes the common path re-encode when it could remux.
 
 If you're planning something large, open an issue first — a `[repo]` or design
 issue costs you nothing and saves a rewrite.

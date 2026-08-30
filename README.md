@@ -7,21 +7,27 @@ through AVFoundation. So this is a **handoff, not a mirror**: the plugin remuxes
 (or, when needed, transcodes) the current file to a live HLS stream with a Go
 supervisor driving `ffmpeg`, serves it on the LAN, and a hidden `<video>` element
 in the sidebar hands the stream URL to the TV through WebKit's own AirPlay picker.
-IINA stays the remote control. See `docs/feasibility.md` for the full reasoning
-and the format-handling matrix.
+IINA stays the remote control, literally: the player keeps running muted as a
+mirror, so IINA's own play/pause/seek drive the Apple TV, and pausing or seeking
+from the TV remote comes back the other way. See `docs/feasibility.md` for the
+full reasoning and the format-handling matrix.
 
-**Status:** v0 core is implemented and works from source — plugin (`plugin/`),
-Go helper (`helper/`), full test suite. Text subtitles (embedded or external
-SRT/ASS; the track selected in IINA) are carried as a WebVTT rendition the TV
-shows via its own subtitle menu. ASS styling is flattened to plain text; image
-subs (PGS/DVD) can't be cast and are dropped with a notice — burn-in is a
-possible future round. The package (`.iinaplgz`, pinned static ffmpeg,
-ad-hoc-signed helper) is built locally by `make pack`, verified by
-`packaging/verify.sh`, and has been **installed through IINA and cast to a real
-Apple TV** (2026-08-29) — so the Gatekeeper assumption the whole design rests on
-holds in practice, not just on paper. CI builds, verifies and remux-tests the
-package on both Apple Silicon and Intel runners and attaches it to a draft
-release; see `docs/releasing.md`.
+**Status:** shipping. The cast UI is a sidebar tab showing packaging progress,
+the stream's state, and what happened to your subtitles. Text subtitles (embedded
+or external SRT/ASS; the track selected in IINA) are carried as a WebVTT rendition
+the TV shows via its own subtitle menu. ASS styling is flattened to plain text;
+image subs (PGS/DVD) can't be cast and are dropped with a notice — burn-in is a
+possible future round.
+
+`v0.2.0` is published and installs through IINA by repo slug. The package
+(`.iinaplgz`, pinned static ffmpeg, ad-hoc-signed helper) is built by `make pack`,
+verified by `packaging/verify.sh`, and `v0.1.0` was **installed from the published
+release and cast to a real Apple TV** — so the Gatekeeper assumption the whole
+design rests on holds in practice, not just on paper. CI builds, verifies and
+remux-tests the package on both Apple Silicon and Intel runners and attaches it to
+a draft release. `docs/releasing.md` has the runbook, including the trap that cost
+`v0.2.0` its audience: IINA's *update* check reads `Info.json` from the root of
+`master`, never from the release, so a flawless release can still reach nobody.
 
 ## Install
 
@@ -80,8 +86,13 @@ tries to serve, or the Apple TV can't reach the stream.
 
 ```sh
 make test       # go test ./... in helper/, node --test over plugin/tests/,
-                 # plus packaging/tests/verify.test.sh
+                 # and the packaging shell tests
 ```
+
+CI runs exactly this. The helper's real-media end-to-end tests **skip themselves**
+when no `ffmpeg` is on `PATH` and `IINA_AIRPLAY_FFMPEG` is unset — so without
+Homebrew's ffmpeg the suite goes green having never driven the pipeline. If you're
+touching the transcode path, check those tests actually ran.
 
 ## Contributing
 
@@ -105,3 +116,5 @@ installs off from updates.
   picker-in-sidebar)
 - `docs/distribution.md` — the packaging and install design for strangers'
   machines
+- `docs/releasing.md` — the release runbook, and why install and update are two
+  different mechanisms that must both be satisfied

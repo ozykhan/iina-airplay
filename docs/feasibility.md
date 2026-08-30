@@ -1,12 +1,17 @@
 # IINA AirPlay Plugin — Feasibility & Architecture
 
-Status: research complete, no code written yet. Date: 2026-08-28.
+Research done 2026-08-28; the open questions it lists were closed by the
+prototype on 2026-08-29 and the design has shipped since. This doc is kept for
+the **why** — why the obvious route is impossible, and what the format handling
+has to do. For what was actually tried, see `docs/prototype.md`; for how the
+package reaches a stranger's Mac, `docs/distribution.md`.
 
 ## Verdict
 
 **Yes, but not "AirPlay the mpv output."** A plugin cannot route IINA's rendered video to an
 AirPlay receiver. It *can* hand the file off to the Apple TV and turn IINA into the remote
-control. That is buildable today with the public plugin API plus one bundled helper binary.
+control. That is buildable with the public plugin API plus bundled helper binaries — no native
+code in IINA's process.
 
 ## Why the direct route is closed
 
@@ -37,24 +42,33 @@ IINA is **not App Sandboxed** (`IINA.entitlements` carries only
 `allow-unsigned-executable-memory` and `disable-library-validation`), so a spawned helper can bind
 a local port and talk to the LAN.
 
-## Proposed architecture
+## The architecture that shipped
 
-1. **Plugin (JS)** adds a menu item "Play on Apple TV…". On invoke it reads
-   `stream-open-filename` / `path`, `time-pos`, and the active audio/subtitle track via `iina.mpv`.
-2. Plugin spawns the **helper** with `utils.exec` (bundled in `@data`).
-3. Helper `ffprobe`s the file, decides remux vs. transcode, runs `ffmpeg` into fMP4/HLS, and
-   serves it over a local HTTP server.
-4. Helper does the AirPlay send. Three options, in order of preference:
-   - **(A) Swift helper with AVKit** — `AVPlayer` on the local HLS URL, `allowsExternalPlayback =
-     true`, `AVRoutePickerView` for the picker. Apple-sanctioned, AirPlay 2, handles pairing/auth.
-   - **(B) WKWebView trick** — the plugin's `standaloneWindow` is a `WKWebView` built with a
-     default `WKWebViewConfiguration`, where `allowsAirPlayForMediaPlayback` defaults to `true`.
-     An `<video controls>` pointing at the local HLS URL should surface WebKit's own AirPlay
-     picker. If this works, no AppKit UI is needed at all. **Prototype this first.**
-   - **(C) Protocol level** — `pyatv` `play_url`, or a raw AirPlay `POST /play`. pyatv's own docs
-     call AirPlay video support "very limited", and tvOS 15 folded it into AirPlay 2. Fallback only.
-5. Pause IINA; keep the IINA window as the controller. Transport commands go to the helper over
-   `iina.ws` or the helper's own HTTP endpoint. On stop, seek IINA back to the TV's position.
+1. **Plugin (JS)** reads `path`, `time-pos` and the selected video/audio/subtitle tracks via
+   `iina.mpv`, and spawns the **Go helper** with `utils.exec` by absolute path out of the
+   package's own `bin/`.
+2. **Helper** decides remux vs. transcode from the track info it is handed, runs the bundled
+   `ffmpeg` into fMP4/HLS, and serves the output directory on `0.0.0.0` on a free port. It
+   reports `ready` / `progress` / `packaged` / `error` as JSON lines on stdout, and dies with
+   IINA via a PPID watchdog.
+3. **The AirPlay send happens in web content, not in a helper.** The plugin's sidebar tab is a
+   `WKWebView` with a default configuration, where `allowsAirPlayForMediaPlayback` defaults to
+   `true`; a hidden 1×1 px `<video>` on the stream URL plus a button calling
+   `webkitShowPlaybackTargetPicker()` surfaces WebKit's own picker. The picker requires a user
+   gesture inside web content, which is why a native menu item cannot summon it.
+
+   This was option (B) of three — the alternatives were a Swift helper using `AVPlayer` /
+   `AVRoutePickerView`, and driving the TV at protocol level via `pyatv`. (B) winning is what
+   collapsed the design to JS + ffmpeg + a small server with no native code and no extra window.
+   `docs/prototype.md` is the record of that test.
+4. **IINA stays the remote, literally.** Rather than pausing on handoff, mpv keeps playing
+   *muted* as a mirror of the TV: IINA's own play/pause/seek drive the Apple TV, and pause or
+   seek from the TV remote mirrors back into mpv. The TV is the clock; the sync core is pure and
+   unit-tested (`plugin/main.js`, spec in
+   `docs/superpowers/specs/2026-08-30-native-controls-mirror-design.md`).
+
+Note that the shipped manifest declares only `file-system` and `show-osd`. `network-request` is
+deliberately absent: neither the plugin nor the helper makes an outbound request at runtime.
 
 ## The real work is transcoding, not AirPlay
 
@@ -65,33 +79,28 @@ Dolby Vision **Profile 5**, HDR10 / HDR10+ / HLG; audio AAC, AC-3, E-AC-3, Atmos
 |---|---|
 | MKV container, H.264/HEVC inside | Remux to fMP4/HLS — no re-encode, fast |
 | DTS / DTS-HD / TrueHD | Transcode to E-AC-3 or AAC — cheap |
-| PGS / VOBSUB subtitles | Cannot pass through: burn in (forces full video re-encode) or use an SRT track converted to WebVTT |
-| ASS/SSA styling | Will not survive as WebVTT; burn-in is the only faithful path |
+| Text subtitles (SRT/ASS/SSA, embedded or external) | Converted to WebVTT and carried as an HLS rendition the TV shows in its own subtitle menu; ASS styling flattens to plain text |
+| PGS / VOBSUB subtitles | Cannot pass through. Burn-in forces a full video re-encode, so v0 drops them and says so; burn-in is a possible future round |
 | Dolby Vision Profile 7 (UHD remuxes) | Drop the enhancement layer, ship the HDR10 base layer |
 | H.264 10-bit, VC-1, MPEG-2 | Full re-encode (VideoToolbox HW encode) |
 
-IINA does **not** bundle an `ffmpeg` CLI (it links the `libav*` dylibs). So the plugin must either
-require a user-installed `ffmpeg` or ship a static build — mind the GPL/LGPL implications of what
-gets bundled.
+IINA does **not** bundle an `ffmpeg` CLI (it links the `libav*` dylibs), so the plugin ships its
+own: a pinned static **LGPL** build, which is what keeps the plugin itself MIT-licensable. The
+build recipe and the compliance obligations are in `docs/distribution.md`.
 
 ## Known friction
 
 - macOS 15+ **Local Network** privacy prompt for LAN serving; the responsible process is IINA.
 - Files on network shares / seedbox mounts are fine — the helper reads and re-serves them.
-  A remote URL that is already ATV-compatible could be flung directly with no local server.
-- No frame-accurate position sync between IINA and the Apple TV; poll and accept drift.
-- **Distribution risk to verify:** IINA installs plugins from GitHub (`ghRepo` / `ghVersion`).
-  A downloaded helper binary may pick up a `com.apple.quarantine` xattr and be refused by
-  Gatekeeper. Likely needs ad-hoc signing / notarization, or stripping the xattr on first run.
-
-## Recommended first prototype (about a day)
-
-1. By hand: `ffmpeg -i movie.mkv -c:v copy -c:a eac3 -f hls ...` into a temp dir, then
-   `python3 -m http.server` over it.
-2. Point Safari (and then a bare `WKWebView`) at an `<video controls>` on that URL and hit the
-   AirPlay button. If the Apple TV plays it, the whole design is de-risked.
-3. Only then scaffold the plugin: `Info.json` with `file-system` + `network-request` permissions,
-   a menu item, and `utils.exec` wiring.
+  Remote URLs as *sources* are declined: the bundled ffmpeg is built `--disable-network`.
+- No frame-accurate position sync between IINA and the Apple TV. The muted mirror corrects drift
+  toward the TV rather than trying to be sample-exact.
+- **Gatekeeper — resolved, not open.** A binary inside a package IINA downloads and extracts
+  itself picks up only `com.apple.provenance`, never `com.apple.quarantine`, so ad-hoc signing
+  is enough and no Developer ID is needed. Verified against IINA's source *and* by experiment,
+  then confirmed end to end by installing `v0.1.0` from the published release. The consequence
+  is that users must install **through IINA** — a browser download quarantines everything
+  inside. Full record in `docs/distribution.md`.
 
 ## Source evidence
 
