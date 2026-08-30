@@ -17,6 +17,7 @@ test:
 	./packaging/tests/zip-plugin.test.sh
 	./packaging/tests/check-release.test.sh
 	./packaging/tests/pack-paths.test.sh
+	./packaging/tests/check-published.test.sh
 	./packaging/tests/release-notes.test.sh
 
 # The gate on the configure line, run against the artifact that ships rather

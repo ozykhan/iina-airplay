@@ -52,7 +52,19 @@ publish one that does not.
    this release exactly as it skips a draft: every check stays green, the
    release page looks fine, and nothing reaches users.
 
-7. **Install it the way a stranger would.** IINA → Settings → Plugins →
+7. **Gate the published result.** Both mechanisms, one command:
+
+   ```sh
+   ./packaging/check-published.sh v0.2.0
+   ```
+
+   `check-release.sh` gates the tag before the build; this gates what actually
+   shipped. It asserts `/releases/latest` names this tag with exactly one
+   `.iinaplgz`, **and** that `master`'s manifest is readable at the repo root
+   with a matching version and an Int `ghVersion` — the half that nothing
+   checked before `v0.2.0` shipped to nobody. See "Two mechanisms" below.
+
+8. **Install it the way a stranger would.** IINA → Settings → Plugins →
    Install → `ozykhan/iina-airplay`. Not the local-package path — the point is
    to exercise the download-from-release path, which is the one thing local
    packaging can never test. Cast one real file, then confirm nothing picked up

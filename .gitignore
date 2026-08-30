@@ -9,3 +9,5 @@ plugin/bin/
 plugin/Info.json
 build/
 helper/helper
+# Claude Code's scratch worktrees; .claude/skills/ IS versioned.
+.claude/worktrees/
