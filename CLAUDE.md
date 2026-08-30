@@ -1,7 +1,10 @@
 # IINA AirPlay plugin
 
-A plugin that gets the file IINA is playing onto an Apple TV. Research is done and
-a throwaway prototype exists; the real plugin is not written yet.
+A plugin that gets the file IINA is playing onto an Apple TV. Shipping: the
+plugin (`plugin/`), the Go helper (`helper/`) and the packaging chain are all
+built, and `v0.2.0` is published and installs through IINA by repo slug. The
+throwaway prototype under `prototype/` is kept as the record of what de-risked
+the design, not as live code.
 
 ## The shape of the thing
 

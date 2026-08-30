@@ -25,6 +25,15 @@
 > `docs/superpowers/specs/2026-08-30-ci-release-design.md` and
 > `docs/releasing.md`.
 
+> **Status 2026-08-31:** `v0.2.0` shipped through this same chain and found the
+> one gap it never covered — the **update** path. Installing and updating read
+> different URLs, and `Info.json` was not where the update check looks
+> (`raw.githubusercontent.com/<ghRepo>/master/Info.json`, the repository root of
+> `master`), so a release that passed every gate reached nobody. The manifest now
+> lives at the repo root and `packaging/pack.sh` copies it in;
+> `packaging/check-published.sh` gates both mechanisms after publish. Full
+> account in `docs/releasing.md`.
+
 ## The decision, and the two designs it beat
 
 The plugin needs three things on a stranger's Mac: an ffmpeg-class remuxer, a LAN
