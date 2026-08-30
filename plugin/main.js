@@ -44,6 +44,17 @@ function selectTracks(trackList) {
   return r;
 }
 
+// selectTracks already decided what happens to subtitles; this just names the
+// decision for the sidebar. Before the redesign that answer existed only as a
+// one-shot OSD flash, which vanished before it could be read.
+function subtitleLabel(tracks) {
+  if (!tracks) return { label: "", warn: false };
+  if (tracks.subDropped) return { label: "Subtitles not supported", warn: true };
+  if (!tracks.sub) return { label: "No subtitles", warn: false };
+  return { label: "Subtitles: " + (tracks.sub.lang || tracks.sub.title || "On"),
+           warn: false };
+}
+
 function parseHelperEvents(buffer, chunk) {
   var data = buffer + chunk;
   var lines = data.split("\n");
@@ -183,6 +194,7 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
+    subtitleLabel: subtitleLabel,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
     isValidPid: isValidPid,
