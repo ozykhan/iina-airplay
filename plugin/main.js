@@ -196,7 +196,7 @@ if (typeof module !== "undefined") {
 
 if (typeof iina !== "undefined") {
   var core = iina.core, mpv = iina.mpv, menu = iina.menu, sidebar = iina.sidebar,
-      utils = iina.utils, file = iina.file, console = iina.console;
+      utils = iina.utils, file = iina.file, console = iina.console, event = iina.event;
 
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
@@ -207,6 +207,51 @@ if (typeof iina !== "undefined") {
   // stops a superseded cast's stale callbacks from clobbering the state of
   // whatever cast (or idle state) came after it.
   var castGen = 0;
+
+  // Active muted mirror (spec 2026-08-30), or null when not casting. Event
+  // callbacks may ONLY swap this object via the pure mirrorOn* functions;
+  // everything that touches mpv runs in onMessage/menu context.
+  var mirror = null;
+
+  // Every post to the page goes through this so the page always sees the live
+  // sync block alongside the pipeline state.
+  function stateForPage() {
+    return {
+      phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      sync: mirror === null ? null : {
+        seq: mirror.seq, paused: mirror.paused,
+        seekTo: mirror.seekTo, startPos: mirror.startPos,
+      },
+    };
+  }
+
+  function endMirror() {
+    if (mirror === null) return;
+    mpv.set("mute", mirror.savedMute);
+    mirror = null;
+  }
+
+  // Helper-initiated teardowns (stopped/error events, exec settling) happen in
+  // exec callbacks, which must not touch mpv from off-main. They only mutate
+  // `state`; the page's next poll lands here (onMessage: safe) and sweeps up.
+  function reapMirror() {
+    if (mirror !== null && (state.phase === "idle" || state.phase === "error")) endMirror();
+  }
+
+  event.on("mpv.pause.changed", function () {
+    if (mirror === null) return;
+    mirror = mirrorOnMpvPause(mirror, !!mpv.getFlag("pause"));
+  });
+  event.on("mpv.seek", function () {
+    if (mirror === null) return;
+    mirror = mirrorOnMpvSeek(mirror, mpv.getNumber("time-pos") || 0, Date.now());
+  });
+  // A new file invalidates the whole cast: the stream on the TV is the old
+  // file. file-loaded is an app event (main thread), so stopCast is safe here.
+  event.on("iina.file-loaded", function () {
+    if (mirror === null) return;
+    stopCast();
+  });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
   // plugin itself lives directly under that <.../plugins> directory. Locate
@@ -314,7 +359,10 @@ if (typeof iina !== "undefined") {
     var gen = ++castGen;
     stdoutRest = "";
     state = { phase: "starting", url: null, pct: 0, msg: null };
-    core.pause();
+    // Muted mirror: keep mpv playing, silenced, instead of pausing. The page
+    // will best-effort seek the TV to startPos once wireless playback begins.
+    mirror = newMirror(mpv.getNumber("time-pos") || 0, !!mpv.getFlag("mute"), !!mpv.getFlag("pause"));
+    mpv.set("mute", true);
 
     resolveBinDir(function (binDir, resolveErr) {
       if (gen !== castGen) return; // superseded by a newer cast or a stop
@@ -371,6 +419,7 @@ if (typeof iina !== "undefined") {
   }
 
   function stopCast() {
+    endMirror();
     castGen++; // invalidate any in-flight cast's callbacks
     resolveBinDir(function (binDir, resolveErr) {
       if (resolveErr) { console.log("[stopCast] " + resolveErr); return; }
@@ -382,18 +431,28 @@ if (typeof iina !== "undefined") {
   function openSidebar() {
     sidebar.loadFile("sidebar.html"); // clears message listeners — register after
     sidebar.onMessage("getState", function () {
-      sidebar.postMessage("state", state); // onMessage handlers are main-thread safe
+      reapMirror();
+      sidebar.postMessage("state", stateForPage()); // onMessage handlers are main-thread safe
     });
     // The page owns starting too, not just stopping: stopCast() tears the whole
     // pipeline down, so without this the sidebar would be a dead end and the
     // only way back to a cast would be re-running the menu item.
     sidebar.onMessage("start", function () {
       startCast();
-      sidebar.postMessage("state", state);
+      sidebar.postMessage("state", stateForPage());
     });
     sidebar.onMessage("stop", function () {
       stopCast();
-      sidebar.postMessage("state", state);
+      sidebar.postMessage("state", stateForPage());
+    });
+    sidebar.onMessage("tvState", function (tv) {
+      if (mirror === null || !tv) return;
+      var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
+                              !!mpv.getFlag("pause"), Date.now());
+      mirror = r.m;
+      if (r.teardown) { stopCast(); return; }
+      if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
+      if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);
     });
     sidebar.show();
   }

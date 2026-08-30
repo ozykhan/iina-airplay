@@ -16,17 +16,25 @@ function loadPlugin(opts = {}) {
   const messages = {};       // name -> handler registered via sidebar.onMessage
   const posted = [];         // [name, payload] sent to the page
   const osd = [];
+  const flags = { pause: false, mute: opts.mute || false };
+  const sets = [];           // [name, value] pushed by mpv.set
+  const events = {};         // event name -> callback registered via event.on
+  const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
   let menuCallback = null;
   let loadedFile = null;
   let shown = 0;
 
   const iina = {
-    core: { osd: (m) => osd.push(m), pause: () => {} },
+    core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
     mpv: {
       getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv") : null),
-      getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120 : 0),
+      getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120
+                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
       getNative: () => trackList,
+      getFlag: (k) => !!flags[k],
+      set: (k, v) => { sets.push([k, v]); flags[k] = v; },
     },
+    event: { on: (name, cb) => { events[name] = cb; } },
     menu: {
       item: (title, cb) => ({ title, cb }),
       addItem: (it) => { menuCallback = it.cb; },
@@ -39,8 +47,9 @@ function loadPlugin(opts = {}) {
     },
     utils: {
       resolvePath: (p) => "/plugins/.data/dev.faruk.iina-airplay" + (p === "@tmp/hls" ? "/tmp/hls" : ""),
-      exec: (bin, args) => {
+      exec: (bin, args, cwd, onStdout) => {
         execs.push({ bin, args });
+        if (typeof onStdout === "function") stdouts.push(onStdout);
         // opts.binDirLookup scripts the /bin/sh lookup that resolveBinDir runs
         // when no bin dir is cached; everything else hangs, as before.
         if (bin === "/bin/sh" && opts.binDirLookup) return Promise.resolve(opts.binDirLookup);
@@ -60,6 +69,9 @@ function loadPlugin(opts = {}) {
 
   return {
     execs, posted, osd,
+    flags, sets,
+    fire: (name) => { assert.ok(events[name], `no event handler for "${name}"`); events[name](); },
+    helperSays: (obj) => { assert.ok(stdouts.length, "no serve running"); stdouts.at(-1)(JSON.stringify(obj) + "\n"); },
     clickMenu: () => menuCallback(),
     send: (name, data) => {
       assert.ok(messages[name], `no onMessage handler registered for "${name}"`);
@@ -212,4 +224,104 @@ test("a file:// URI is normalized and cast, not declined as a network stream", (
   p.clickMenu();
   assert.equal(serves(p).length, 1, "a file:// URI names a real local file that should be castable");
   assert.ok(!p.osd.some(m => /network stream/i.test(m)), "file:// must not be mislabelled a network stream");
+});
+
+// ---- muted mirror wiring (spec 2026-08-30) ----
+
+test("starting a cast mutes mpv and does NOT pause it", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  assert.deepEqual(p.sets.filter(([k]) => k === "mute").at(-1), ["mute", true]);
+  assert.equal(p.flags.pause, false, "the muted mirror replaced core.pause()");
+});
+
+test("state posts carry the sync block while casting, null when idle", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.send("getState", {});
+  assert.deepEqual(p.state().sync,
+    { seq: 0, paused: false, seekTo: null, startPos: 42 });
+  p.send("stop", {});
+  assert.equal(p.state().sync, null);
+});
+
+test("stop restores the pre-cast mute flag (false case)", () => {
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  p.send("stop", {});
+  assert.equal(p.flags.mute, false);
+});
+
+test("stop preserves a user's pre-cast mute (true case)", () => {
+  const p = loadPlugin({ mute: true });
+  p.clickMenu();
+  assert.equal(p.flags.mute, true, "muting an already-muted mpv is fine");
+  p.send("stop", {});
+  assert.equal(p.flags.mute, true, "the user's own mute must survive the cast");
+});
+
+test("an mpv pause bumps the sync seq and desired state", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.flags.pause = true;
+  p.fire("mpv.pause.changed");
+  p.send("getState", {});
+  assert.equal(p.state().sync.seq, 1);
+  assert.equal(p.state().sync.paused, true);
+});
+
+test("an mpv seek becomes a seekTo command", () => {
+  const p = loadPlugin({ timePos: 300 });
+  p.clickMenu();
+  p.fire("mpv.seek");
+  p.send("getState", {});
+  assert.deepEqual(p.state().sync.seekTo, { seq: 1, pos: 300 });
+});
+
+test("a TV-remote pause is mirrored into mpv", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.send("tvState", { appliedSeq: 0, pos: 42, paused: true, wireless: true, ended: false });
+  assert.deepEqual(p.sets.filter(([k]) => k === "pause").at(-1), ["pause", true]);
+});
+
+test("drift beyond tolerance corrects mpv's clock to the TV's", () => {
+  const p = loadPlugin({ timePos: 42 });
+  p.clickMenu();
+  p.send("tvState", { appliedSeq: 0, pos: 50, paused: false, wireless: true, ended: false });
+  assert.deepEqual(p.sets.filter(([k]) => k === "time-pos").at(-1), ["time-pos", 50]);
+});
+
+test("tvState.ended tears the cast down and restores mute", () => {
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  p.send("tvState", { appliedSeq: 0, pos: 120, paused: false, wireless: true, ended: true });
+  assert.equal(stops(p).length, 1);
+  assert.equal(p.flags.mute, false);
+  p.send("getState", {});
+  assert.equal(p.state().phase, "idle");
+});
+
+test("loading a new file during a cast tears it down", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.fire("iina.file-loaded");
+  assert.equal(stops(p).length, 1);
+  assert.equal(p.flags.mute, false);
+});
+
+test("file-loaded without a cast is a no-op", () => {
+  const p = loadPlugin();
+  p.fire("iina.file-loaded");
+  assert.equal(stops(p).length, 0);
+});
+
+test("the poll restores mute after the helper dies on its own", () => {
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  p.helperSays({ event: "stopped" });  // helper-initiated teardown: off-main, may not touch mpv
+  assert.equal(p.flags.mute, true, "the exec callback itself must not touch mpv");
+  p.send("getState", {});              // the next poll runs on-message: safe to restore
+  assert.equal(p.flags.mute, false);
+  assert.equal(p.state().sync, null);
 });
