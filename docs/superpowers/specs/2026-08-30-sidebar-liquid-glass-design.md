@@ -161,7 +161,7 @@ briefly lived.
   the existing pure-function tests: a text track with `lang`, one with only
   `title`, one with neither, a `subDropped` result, and `null`.
 - The render path stays manual — it is DOM in a webview with no harness, as
-  today. Verify by driving all six rows of the state table against a real cast,
+  today. Verify by driving every row of the state table against a real cast,
   in both light and dark appearance.
 
 ## Out of scope

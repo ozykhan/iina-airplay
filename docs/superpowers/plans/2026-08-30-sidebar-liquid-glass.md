@@ -600,7 +600,7 @@ Confirm each, in System Settings → Appearance → Dark:
 
 - [ ] **Step 3: Repeat in light appearance**
 
-Switch to System Settings → Appearance → Light and walk the same six rows. The card must stay legible — dark text on the light sidebar material, no white-on-white.
+Switch to System Settings → Appearance → Light and walk the same rows. The card must stay legible — dark text on the light sidebar material, no white-on-white.
 
 - [ ] **Step 4: Check the narrow-sidebar case**
 
