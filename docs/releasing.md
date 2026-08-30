@@ -103,7 +103,9 @@ IINA looks.
 Two consequences worth keeping in mind:
 
 - **The update beacon is branch state, not release state.** A manifest fix
-  reaches existing users on a plain push to `master` — no new tag, no rebuild.
+  reaches existing users as soon as it lands on `master` — no new tag, no
+  rebuild. `master` is protected, so "lands on `master`" means a one-commit PR
+  that passes CI, not a direct push.
 - **`master` must carry the bumped `ghVersion`.** Tagging a release whose
   manifest never lands on `master` leaves the update check reading the old
   number, however correct the release page looks.
