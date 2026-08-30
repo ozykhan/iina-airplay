@@ -11,6 +11,11 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 # against the real plugin/ sources that happen to live next to this script.
 SRC_ROOT="${VERIFY_SRC_ROOT:-$ROOT/plugin}"
 
+# Overridable so packaging/tests/verify.test.sh can exercise the x86_64-native
+# path from an arm64 machine, the same way VERIFY_SRC_ROOT lets it isolate the
+# staleness check. Nothing outside the tests should set it.
+HOST_ARCH="${VERIFY_HOST_ARCH:-$(uname -m)}"
+
 PKG="${1:-}"
 [ -n "$PKG" ] && [ -f "$PKG" ] || { echo "usage: verify.sh <package.iinaplgz>" >&2; exit 2; }
 
@@ -177,12 +182,22 @@ check_ffmpeg_slice() {
   done
 }
 
-check_ffmpeg_slice "$(uname -m) (native)" ""
-
-if /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
-  check_ffmpeg_slice "x86_64" "1"
+# Decide and ANNOUNCE which slices get checked before running any of them. A
+# note printed after the native pass would never appear when that pass fails
+# and exits — leaving no record in the log of whether the x86_64 slice was
+# covered, which is exactly the question CI needs the log to answer.
+run_rosetta_pass=""
+if [ "$HOST_ARCH" = "x86_64" ]; then
+  echo "verify: note — the native slice is x86_64, so its assertions run natively; skipping the redundant Rosetta pass" >&2
+elif /usr/bin/arch -x86_64 /usr/bin/true >/dev/null 2>&1; then
+  run_rosetta_pass=1
 else
   echo "verify: note — Rosetta (arch -x86_64) is unavailable on this machine; skipping the x86_64-slice ffmpeg assertions" >&2
+fi
+
+check_ffmpeg_slice "$HOST_ARCH (native)" ""
+if [ -n "$run_rosetta_pass" ]; then
+  check_ffmpeg_slice "x86_64" "1"
 fi
 
 # --- linkage ----------------------------------------------------------------

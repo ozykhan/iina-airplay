@@ -1,0 +1,46 @@
+name: ci
+
+# Tags are excluded: package.yml owns them and runs `make test` itself, so the
+# release chain is self-contained rather than depending on a second workflow's
+# status.
+on:
+  push:
+    branches: ['**']
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    # Pinned, not macos-latest: package.yml pins macos-15 and macos-15-intel so
+    # its two legs differ only in architecture, and this job should be running
+    # the same OS they do. macos-latest moves without a commit.
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v7
+
+      - uses: actions/setup-go@v7
+        with:
+          go-version-file: helper/go.mod
+
+      - uses: actions/setup-node@v7
+        with:
+          node-version: '22'
+
+      # Load-bearing, not convenience. locateSystemFFmpeg SKIPS the real-media
+      # e2e when no system ffmpeg is found and IINA_AIRPLAY_FFMPEG is unset, so
+      # without this the suite reports green having never driven the pipeline
+      # through ffmpeg at all. Fixtures need libx264, flac, srt and the
+      # matroska muxer — exactly what the bundled LGPL build excludes.
+      - name: Install ffmpeg for test fixtures
+        run: brew install ffmpeg
+
+      - name: Confirm the e2e suite will not silently skip
+        run: test -x /opt/homebrew/bin/ffmpeg
+
+      - run: make test
