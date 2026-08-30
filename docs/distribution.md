@@ -14,9 +14,14 @@
 > Intel hardware for the first time** — previously it was only checked
 > structurally and under Rosetta — with `verify.sh`'s licensing and encoder
 > assertions and a real `test-package.sh` remux both passing natively on
-> Intel. Still outstanding: installing from a **published** release and
-> confirming no quarantine reaches the binaries, which closes only once a
-> human publishes a draft and installs by repo slug. See
+> Intel. **And `v0.1.0` has been installed from the published GitHub release
+> through IINA's own repo-slug installer and cast to a real Apple TV**, with
+> no `com.apple.quarantine` anywhere in the installed tree — only
+> `com.apple.provenance`, which does not trigger Gatekeeper. The installed
+> binaries' SHA-256 sums match the released asset's recorded hashes exactly
+> and `bin/VERSIONS` reports `helper_version=v0.1.0`, so these are the CI-built
+> bits that came down the release channel, not a leftover local install. Both
+> questions this round opened are now closed. See
 > `docs/superpowers/specs/2026-08-30-ci-release-design.md` and
 > `docs/releasing.md`.
 

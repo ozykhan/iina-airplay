@@ -99,13 +99,19 @@ release (or draft) first, or attach the missing asset to it with
 
 ## Rebuilding without releasing
 
-`workflow_dispatch` on `package.yml` is the intended way to rehearse the chain
-and warm the ffmpeg cache before a tag push: it runs `build` and
-`verify-intel` and creates no release, leaving the `.iinaplgz` as a workflow
-artifact. Dispatching a workflow requires it to exist on the default branch,
-so this becomes available once `package.yml` merges to `master` — it has not
-been exercised yet; the two runs measured so far were both `pull_request`
-runs on PR #1.
+`workflow_dispatch` on `package.yml` rehearses the chain and warms the ffmpeg
+cache before a tag push: it runs `build` and `verify-intel` and creates no
+release, leaving the `.iinaplgz` as a workflow artifact.
+
+**Dispatch it on `master`, and do not expect a pull request to have warmed
+anything.** GitHub scopes Actions caches by ref: a cache written on
+`refs/pull/N/merge` is invisible to `refs/tags/v*`, and only caches written on
+the **default branch** are readable from every other ref. This is not a
+theory — the `v0.1.0` tag build logged `Cache not found for input keys:
+ffmpeg-universal-macos15-…` and paid the full ~6-minute ffmpeg build, even
+though two PR runs had already built and cached that exact key minutes
+earlier. A dispatch on `master` writes a cache every later tag can read; a PR
+run does not.
 
 The `release` job never runs on a dispatch, so preview its notes by hand against
 the artifact:
