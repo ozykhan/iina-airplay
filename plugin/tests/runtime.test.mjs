@@ -316,6 +316,21 @@ test("file-loaded without a cast is a no-op", () => {
   assert.equal(stops(p).length, 0);
 });
 
+test("a pre-handshake tvState must not un-pause a paused cast", () => {
+  const p = loadPlugin();
+  p.flags.pause = true;         // mpv is paused when the user starts the cast
+  p.clickMenu();
+  // appliedSeq -1 is what the page sends before its own seq-0 sync (carrying
+  // the initial paused snapshot) has been applied: appliedSeq -1 < mirror.seq
+  // 0 suspends reconciliation, so this pre-handshake tvState must not be
+  // misread as a TV-initiated un-pause.
+  p.send("tvState", { appliedSeq: -1, pos: 0, paused: false, wireless: true, ended: false });
+  assert.ok(!p.sets.some(([k, v]) => k === "pause" && v === false),
+    "a pre-handshake tvState must not un-pause mpv");
+  p.send("getState", {});
+  assert.equal(p.state().sync.paused, true, "the initial snapshot must still be the desired state");
+});
+
 test("the poll restores mute after the helper dies on its own", () => {
   const p = loadPlugin({ mute: false });
   p.clickMenu();
@@ -324,6 +339,16 @@ test("the poll restores mute after the helper dies on its own", () => {
   p.send("getState", {});              // the next poll runs on-message: safe to restore
   assert.equal(p.flags.mute, false);
   assert.equal(p.state().sync, null);
+});
+
+test("tvState reaps a stale mirror after the helper dies, before touching mpv", () => {
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  p.helperSays({ event: "stopped" }); // helper-initiated teardown: off-main, only state mutates
+  p.send("tvState", { appliedSeq: 0, pos: 50, paused: false, wireless: true, ended: false });
+  assert.equal(p.flags.mute, false, "tvState must reap the stale mirror and restore mute");
+  assert.ok(!p.sets.some(([k, v]) => k === "time-pos" && v === 50),
+    "must not mpv.set against a dead stream");
 });
 
 test("restarting a cast after a helper-initiated teardown does not corrupt the saved mute", () => {

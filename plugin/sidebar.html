@@ -95,7 +95,10 @@
     if ((s.phase === "ready" || s.phase === "packaged") && s.url && s.url !== loadedURL) {
       loadedURL = s.url;
       retried = false;
-      appliedSeq = 0; ended = false; initialSeekPending = true;
+      // -1, not 0: the mirror's very first sync (seq 0) carries the cast's
+      // initial paused snapshot, and applySync's `sync.seq > appliedSeq` gate
+      // would otherwise never let it through, autoplaying over a paused mpv.
+      appliedSeq = -1; ended = false; initialSeekPending = true;
       v.src = s.url;
       v.play().catch(function () {});
     }

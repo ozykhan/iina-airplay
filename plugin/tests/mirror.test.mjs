@@ -85,6 +85,15 @@ test("ended tears the cast down", () => {
   assert.equal(r.teardown, true);
 });
 
+test("ended without a wireless target does not tear down", () => {
+  // A short file's LOCAL (muted, hidden) playback ending before the user
+  // ever picks a TV must not kill the cast.
+  const r = mirrorOnTvState(newMirror(0, false, false), tv({ ended: true, wireless: false }), 0, false, 0);
+  assert.equal(r.teardown, false);
+  assert.equal(r.setMpvPos, null);
+  assert.equal(r.setMpvPaused, null);
+});
+
 test("no wireless target means no clock to follow: no actions", () => {
   const r = mirrorOnTvState(newMirror(0, false, false), tv({ wireless: false, pos: 90 }), 10, false, 0);
   assert.equal(r.setMpvPos, null);
@@ -103,6 +112,15 @@ test("an ack clears the pending seekTo", () => {
   const m0 = { ...newMirror(0, false, false), seq: 1, seekTo: { seq: 1, pos: 300 } };
   const r = mirrorOnTvState(m0, tv({ appliedSeq: 1, pos: 300 }), 300, false, 0);
   assert.equal(r.m.seekTo, null);
+});
+
+test("an ack clears seekTo even before wireless playback starts", () => {
+  const m0 = { ...newMirror(0, false, false), seq: 1, seekTo: { seq: 1, pos: 300 } };
+  const r = mirrorOnTvState(m0, tv({ appliedSeq: 1, wireless: false }), 300, false, 0);
+  assert.equal(r.m.seekTo, null);
+  assert.equal(r.setMpvPos, null);
+  assert.equal(r.setMpvPaused, null);
+  assert.equal(r.teardown, false);
 });
 
 test("a TV-remote pause is mirrored into mpv with the echo flag armed", () => {

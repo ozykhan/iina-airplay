@@ -154,15 +154,21 @@ function mirrorOnMpvSeek(m, mpvPos, now) {
 
 // The page reported TV state. Decides what (if anything) to push into mpv.
 // While commands are in flight (appliedSeq < seq) the TV state is stale, so
-// nothing is reconciled against it — not even drift.
+// nothing is reconciled against it — not even drift. ended only tears the
+// cast down once the TV is actually the one playing: a short file's LOCAL
+// (muted, hidden) playback ending before the user ever picks a TV must not
+// kill the cast. An acked seekTo is cleared as soon as it's acked, even
+// before wireless playback starts, so a pre-wireless user seek doesn't leave
+// a stale command sitting in the sync block.
 function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
   var out = { m: m, setMpvPos: null, setMpvPaused: null, teardown: false };
-  if (tvState.ended) { out.teardown = true; return out; }
-  if (!tvState.wireless) return out;      // nothing on the TV yet: no clock to follow
-  if (tvState.appliedSeq < m.seq) return out;
+  if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
   var n = Object.assign({}, m);
-  if (m.seekTo !== null) n.seekTo = null; // acked
-  if (tvState.paused !== m.paused) {      // TV-remote initiated: mirror into mpv
+  var acked = tvState.appliedSeq >= m.seq;
+  if (acked) n.seekTo = null;
+  out.m = n;
+  if (!tvState.wireless || !acked) return out; // nothing on the TV yet, or a command is in flight: no clock to follow
+  if (tvState.paused !== n.paused) {      // TV-remote initiated: mirror into mpv
     n.paused = tvState.paused;
     n.expectMpvPause = tvState.paused;
     out.setMpvPaused = tvState.paused;
@@ -171,7 +177,6 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
     out.setMpvPos = tvState.pos;
     n.lastSetPos = { pos: tvState.pos, at: now };
   }
-  out.m = n;
   return out;
 }
 
@@ -450,6 +455,8 @@ if (typeof iina !== "undefined") {
       sidebar.postMessage("state", stateForPage());
     });
     sidebar.onMessage("tvState", function (tv) {
+      reapMirror(); // a helper-initiated teardown may have left a stale mirror
+                    // un-reaped; don't mpv.set against a dead stream.
       if (mirror === null || !tv) return;
       var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
                               !!mpv.getFlag("pause"), Date.now());
