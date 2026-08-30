@@ -1,9 +1,9 @@
 {
   "name": "AirPlay",
   "identifier": "dev.faruk.iina-airplay",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "ghRepo": "ozykhan/iina-airplay",
-  "ghVersion": 1,
+  "ghVersion": 2,
   "author": { "name": "Faruk Can Ozkan" },
   "description": "Cast the current file to an AirPlay device: remuxes to HLS, serves on the LAN, and hands the stream to the TV. IINA stays your remote.",
   "entry": "main.js",
