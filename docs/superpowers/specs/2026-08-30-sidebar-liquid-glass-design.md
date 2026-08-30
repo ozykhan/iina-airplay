@@ -91,9 +91,10 @@ and its event stream are untouched.
 ### `subtitleLabel(tracks)`
 
 A pure function beside `selectTracks`, taking a `selectTracks` result (or
-`null`) and returning `{ label, warn }`:
+`null`) and returning `{ label, warn }`. `label` is the finished display
+string, so the page does no string building:
 
-- `tracks.sub` present → `sub.lang` if set, else `sub.title` if set, else `"On"`
+- `tracks.sub` present → `"Subtitles: "` + `sub.lang`, else `sub.title`, else `"On"`
 - `tracks.subDropped` → `{ label: "Subtitles not supported", warn: true }`
 - `tracks` null (no castable tracks yet) → `{ label: "", warn: false }`
 - neither → `{ label: "No subtitles", warn: false }`
