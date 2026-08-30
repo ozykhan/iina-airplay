@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: How to build, test and contribute
+    url: https://github.com/ozykhan/iina-airplay/blob/master/CONTRIBUTING.md
+    about: Dev loop, test suite, branch workflow and the constraints that bite newcomers.
+  - name: Why this is a handoff and not a mirror
+    url: https://github.com/ozykhan/iina-airplay/blob/master/docs/feasibility.md
+    about: The platform limits behind the design, with sources. Read before proposing an architecture change.

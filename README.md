@@ -83,6 +83,19 @@ make test       # go test ./... in helper/, node --test over plugin/tests/,
                  # plus packaging/tests/verify.test.sh
 ```
 
+## Contributing
+
+Contributions are welcome. [`CONTRIBUTING.md`](CONTRIBUTING.md) covers the dev
+loop, the test suite, what you can verify without an Apple TV, the branch and
+issue conventions, and the handful of platform constraints that bite everyone
+once. New here? Look for
+[`good first issue`](https://github.com/ozykhan/iina-airplay/labels/good%20first%20issue).
+
+Trunk-based: branch off `master`, open a PR back into it, squash-merge; CI's
+`test` gate must pass. `master` is not a stylistic choice — IINA's update check
+reads `Info.json` from that branch by name, so renaming it would cut existing
+installs off from updates.
+
 ## Docs
 
 - `docs/feasibility.md` — why the direct route is closed, what's possible instead,

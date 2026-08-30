@@ -1,0 +1,71 @@
+name: Bug report
+description: Something is broken — a cast that fails, a crash, a wrong result
+title: "[area] "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Replace `[area]` in the title with the surface this touches:
+        `[plugin]`, `[helper]`, `[packaging]`, `[repo]` or `[docs]`.
+
+        Casting depends on the file, the Mac and the TV, so the details below
+        are what make a report actionable. If you're reporting something that
+        isn't a cast failure (a build break, a docs error), skip the fields
+        that don't apply.
+
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you did, what you expected, what you got instead.
+    validations:
+      required: true
+
+  - type: textarea
+    id: versions
+    attributes:
+      label: Versions
+      value: |
+        - macOS:
+        - Mac model:
+        - IINA:
+        - Plugin version (Info.json `version`, or "built from source at <commit>"):
+        - Installed via: IINA's plugin installer / local package / `make dev`
+    validations:
+      required: true
+
+  - type: textarea
+    id: device
+    attributes:
+      label: AirPlay device
+      description: Leave blank if the failure happens before any cast is attempted.
+      value: |
+        - Model (e.g. Apple TV 4K 3rd gen):
+        - tvOS version:
+
+  - type: textarea
+    id: media
+    attributes:
+      label: The file
+      description: >
+        `ffprobe -hide_banner <file>` output is ideal. Otherwise: container,
+        video codec, audio codec, and which subtitle track was selected.
+      render: text
+
+  - type: textarea
+    id: logs
+    attributes:
+      label: Plugin console log
+      description: >
+        IINA → Settings → Plugins → select the plugin → console. Copy the lines
+        from the failed attempt.
+      render: text
+
+  - type: checkboxes
+    id: local-network
+    attributes:
+      label: Checks
+      options:
+        - label: On macOS 15+, IINA has the Local Network permission granted.
+        - label: I installed through IINA's plugin installer, or built from source — not by downloading the `.iinaplgz` in a browser.

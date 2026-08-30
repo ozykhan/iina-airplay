@@ -1,0 +1,44 @@
+name: Feature request
+description: Propose a change or an addition
+title: "[area] "
+labels: ["enhancement"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Replace `[area]` in the title with the surface this touches:
+        `[plugin]`, `[helper]`, `[packaging]`, `[repo]` or `[docs]`.
+
+        Before proposing an architecture change, please read
+        [`docs/feasibility.md`](https://github.com/ozykhan/iina-airplay/blob/master/docs/feasibility.md) — it
+        records which routes the platform closes off, and why this is a handoff
+        rather than a mirror.
+
+  - type: textarea
+    id: problem
+    attributes:
+      label: The problem
+      description: What doesn't work today, or what you can't do.
+    validations:
+      required: true
+
+  - type: textarea
+    id: proposal
+    attributes:
+      label: What you'd like instead
+    validations:
+      required: true
+
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: Alternatives considered
+      description: Including anything you tried that didn't work.
+
+  - type: checkboxes
+    id: scope
+    attributes:
+      label: Scope check
+      options:
+        - label: This doesn't require native code in the plugin (the plugin API is JavaScript only).
+        - label: This doesn't make the common path re-encode where it could remux.
