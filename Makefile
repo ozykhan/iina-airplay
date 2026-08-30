@@ -16,6 +16,7 @@ test:
 	./packaging/tests/verify.test.sh
 	./packaging/tests/zip-plugin.test.sh
 	./packaging/tests/check-release.test.sh
+	./packaging/tests/release-notes.test.sh
 
 # The gate on the configure line, run against the artifact that ships rather
 # than against build/ffmpeg/ffmpeg. Both CI jobs run exactly this.
