@@ -18,7 +18,7 @@ get it?" It is not a docs site. The design docs stay on GitHub.
 | URL               | Default `ozykhan.github.io/iina-airplay`                | Nothing to configure beyond enabling Pages                                                                                               |
 | Look              | Light macOS: off-white, system font, text left/demo right | Matches IINA itself; slug and demo both above the fold on a laptop                                                                     |
 | Jekyll            | Off, via `docs/.nojekyll`                               | Two files under `docs/superpowers/` contain `{{ }}` from Actions YAML; Liquid would fail the Pages build. Static serving sidesteps it     |
-| Demo asset        | MP4 + poster committed under `docs/`, not the GIF       | The README's GIF is 9.5 MB; the same clip as H.264 is 1.1 MB. `<video autoplay muted loop playsinline>` behaves like a GIF, iPhone included |
+| Demo asset        | MP4 + poster committed under `docs/`, encoded from the original recording | The README's GIF is 9.5 MB and 256-colour; the original `sintel.mov` (2150×980, 43 MB) encodes to a 2.2 MB 1200×546 H.264 clip. `<video autoplay muted loop playsinline>` behaves like a GIF, iPhone included |
 | Build step        | None                                                    | Hand-written HTML, inline CSS, no JS, no external fonts or scripts                                                                        |
 
 ## Files
@@ -26,14 +26,15 @@ get it?" It is not a docs site. The design docs stay on GitHub.
 ```
 docs/
   index.html         the whole page
-  demo.mp4           800×365, H.264 yuv420p, faststart, ~1.1 MB, 12.7 s loop
-  demo-poster.jpg    first frame of demo.mp4, shown until the video plays
+  demo.mp4           1200×546, H.264 yuv420p, 30 fps, faststart, ~2.2 MB, 13.7 s loop
+  demo-poster.jpg    first frame at 1200×546, shown until the video plays
   .nojekyll          empty; disables Jekyll for the /docs source
 ```
 
-The MP4 is produced once from the README's GIF with ffmpeg
-(`-c:v libx264 -crf 23 -preset slow -pix_fmt yuv420p -movflags +faststart`,
-dimensions rounded down to even). It is not part of any build; it is a committed
+The MP4 is produced once from the maintainer's original screen recording
+(`~/Desktop/sintel.mov`, kept outside the repo) with ffmpeg
+(`scale=1200:-2,fps=30`, `-c:v libx264 -crf 24 -preset slow -pix_fmt yuv420p
+-movflags +faststart -an`). It is not part of any build; it is a committed
 asset. Regenerate by hand if the demo footage changes.
 
 ## Page content, top to bottom

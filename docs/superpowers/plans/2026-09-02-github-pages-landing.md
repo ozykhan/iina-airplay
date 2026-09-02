@@ -6,7 +6,7 @@
 
 **Architecture:** One hand-written `docs/index.html` with inline CSS and no JavaScript, plus a committed MP4 demo and poster. A `.nojekyll` marker turns Jekyll off so the design docs (which contain `{{ }}`) cannot fail the Pages build. Pages is enabled through the GitHub API after the branch merges, because `docs/` already exists on `master` and enabling it earlier would make Jekyll attempt (and fail) a build of the markdown there.
 
-**Tech Stack:** Static HTML/CSS, ffmpeg (Homebrew, for the one-time GIF→MP4 conversion), `gh` CLI for repo settings.
+**Tech Stack:** Static HTML/CSS, ffmpeg (Homebrew, for the one-time encode of the demo recording), `gh` CLI for repo settings.
 
 Spec: `docs/superpowers/specs/2026-09-02-github-pages-landing-design.md`
 
@@ -15,7 +15,7 @@ Spec: `docs/superpowers/specs/2026-09-02-github-pages-landing-design.md`
 - Pages source is `master` / `/docs`. No deploy workflow, no `gh-pages` branch, no custom domain.
 - `docs/index.html` loads nothing from outside the repo: no external fonts, scripts, stylesheets or images. The only outbound links are anchors to GitHub.
 - The page carries no version number.
-- Demo asset is `docs/demo.mp4` (800×364, H.264 yuv420p, faststart) with `docs/demo-poster.jpg`. The 9.5 MB GIF is never committed.
+- Demo asset is `docs/demo.mp4` (1200×546, H.264 yuv420p, 30 fps, faststart, ~2.2 MB) with `docs/demo-poster.jpg` (1200×546), both encoded from the maintainer's original screen recording `~/Desktop/sintel.mov` (2150×980, 13.7 s). Neither the 43 MB recording nor the README's 9.5 MB GIF is ever committed.
 - Palette: light by default, dark under `prefers-color-scheme: dark`, both as custom properties on `:root`. Single column under 720 px. No horizontal scroll at any width.
 - System font stack: `-apple-system, BlinkMacSystemFont, "SF Pro Text", "Helvetica Neue", Helvetica, Arial, sans-serif`; monospace `"SF Mono", Menlo, Consolas, monospace`.
 - Commit messages end with `Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>`.
@@ -32,53 +32,59 @@ Spec: `docs/superpowers/specs/2026-09-02-github-pages-landing-design.md`
 - Create: `docs/.nojekyll`
 
 **Interfaces:**
-- Produces: `docs/demo.mp4` (800×364) and `docs/demo-poster.jpg` (800×365, from the GIF directly), referenced by relative path from `docs/index.html` in Task 2.
+- Produces: `docs/demo.mp4` (1200×546) and `docs/demo-poster.jpg` (1200×546), referenced by relative path from `docs/index.html` in Task 2.
 
-- [ ] **Step 1: Fetch the README's GIF into the scratchpad**
+- [ ] **Step 1: Locate the source recording**
 
-The GIF is the one embedded in `README.md` (a GitHub user-attachment). Download it to a temp dir, not into the repo:
+The demo is encoded from the maintainer's original screen recording, not from
+the README's GIF (which is 256-colour and dithered). It lives outside the
+repo and is never committed:
 
 ```bash
-mkdir -p /tmp/iina-airplay-demo
-curl -sL -o /tmp/iina-airplay-demo/demo.gif \
-  https://github.com/user-attachments/assets/57781b27-13fe-4c9a-a96c-7818986025c0
-file /tmp/iina-airplay-demo/demo.gif
+ls -la ~/Desktop/sintel.mov
+ffprobe -v error -select_streams v:0 -show_entries stream=codec_name,width,height -show_entries format=duration -of default=noprint_wrappers=1 ~/Desktop/sintel.mov
 ```
 
-Expected: `GIF image data, version 89a, 800 x 365`. If `file` reports HTML instead, the attachment URL redirected to a login page; open the URL in a browser, save the GIF by hand to that path, and continue.
+Expected: about 43 MB, `h264`, `2150`×`980`, duration `13.680000`. If the file
+is missing, stop and ask the maintainer for it; do not fall back to the GIF.
 
-- [ ] **Step 2: Convert to MP4 and extract the poster**
+- [ ] **Step 2: Encode the MP4 and extract the poster**
 
 ```bash
-ffmpeg -v error -y -i /tmp/iina-airplay-demo/demo.gif \
-  -vf "scale=trunc(iw/2)*2:trunc(ih/2)*2" \
-  -c:v libx264 -crf 23 -preset slow -pix_fmt yuv420p -movflags +faststart \
+ffmpeg -v error -y -i ~/Desktop/sintel.mov \
+  -vf "scale=1200:-2,fps=30" -an \
+  -c:v libx264 -crf 24 -preset slow -pix_fmt yuv420p -movflags +faststart \
   docs/demo.mp4
-ffmpeg -v error -y -i /tmp/iina-airplay-demo/demo.gif -frames:v 1 -q:v 3 docs/demo-poster.jpg
+ffmpeg -v error -y -i ~/Desktop/sintel.mov -vf "scale=1200:-2" -frames:v 1 -q:v 3 docs/demo-poster.jpg
 ```
 
-`ffmpeg` is Homebrew's (`brew install ffmpeg`, already required by `make dev`). The `scale` filter rounds dimensions down to even numbers, which `yuv420p` requires; for this clip it trims the height from 365 to 364.
+`ffmpeg` is Homebrew's (`brew install ffmpeg`, already required by `make dev`).
+`scale=1200:-2` keeps the aspect ratio and rounds the height to an even
+number, which `yuv420p` requires. `fps=30` drops the recording's variable
+frame rate to a steady 30. `-an` drops the (empty) audio track.
 
 - [ ] **Step 3: Check the results**
 
 ```bash
 ls -la docs/demo.mp4 docs/demo-poster.jpg
 ffprobe -v error -select_streams v:0 \
-  -show_entries stream=codec_name,width,height,pix_fmt -show_entries format=duration \
+  -show_entries stream=codec_name,width,height,pix_fmt,r_frame_rate -show_entries format=duration \
   -of default=noprint_wrappers=1 docs/demo.mp4
+file docs/demo-poster.jpg
 ```
 
-Expected: `demo.mp4` about 1.1 MB, `demo-poster.jpg` under 100 KB, and
+Expected: `demo.mp4` about 2.2 MB, `demo-poster.jpg` about 140 KB, and
 
 ```
 codec_name=h264
-width=800
-height=364
+width=1200
+height=546
 pix_fmt=yuv420p
-duration=12.666667
+r_frame_rate=30/1
+duration=13.700000
 ```
 
-The height is 364, not the GIF's 365: `yuv420p` needs even dimensions and the scale filter rounds down. Task 2's `<video>` tag uses 364.
+Task 2's `<video>` tag uses `width="1200" height="546"`.
 
 - [ ] **Step 4: Create the Jekyll marker**
 
@@ -108,7 +114,7 @@ Co-Authored-By: Claude Fable 5.1 <noreply@anthropic.com>"
 
 - [ ] **Step 1: Write the page**
 
-Write this to `docs/index.html`. The `width`/`height` attributes on the video are 800×364, matching Task 1's MP4; they only fix the aspect ratio for layout, the CSS scales it.
+Write this to `docs/index.html`. The `width`/`height` attributes on the video are 1200×546, matching Task 1's MP4; they only fix the aspect ratio for layout, the CSS scales it.
 
 ```html
 <!doctype html>
@@ -255,10 +261,10 @@ Write this to `docs/index.html`. The `width`/`height` attributes on the video ar
     <div class="demo-col">
       <div class="demo">
         <video autoplay muted loop playsinline preload="metadata"
-               width="800" height="364" poster="demo-poster.jpg"
+               width="1200" height="546" poster="demo-poster.jpg"
                aria-label="The iina-airplay sidebar casting a film from IINA to an Apple TV">
           <source src="demo.mp4" type="video/mp4">
-          <img src="demo-poster.jpg" width="800" height="364" alt="The iina-airplay sidebar casting a film from IINA to an Apple TV">
+          <img src="demo-poster.jpg" width="1200" height="546" alt="The iina-airplay sidebar casting a film from IINA to an Apple TV">
         </video>
       </div>
       <p class="credit">Demo footage: <em>Sintel</em> © <a href="https://durian.blender.org">Blender Foundation</a>, <a href="https://creativecommons.org/licenses/by/3.0/">CC BY 3.0</a>.</p>
@@ -448,7 +454,7 @@ gh pr create --base master --title "Add a GitHub Pages landing page" --body "$(c
 One-screen landing page at https://ozykhan.github.io/iina-airplay/, served from `docs/` on `master`.
 
 - `docs/index.html`: hand-written, inline CSS, no JS, no external assets, light/dark, single column under 720 px.
-- `docs/demo.mp4` + poster: the README's 9.5 MB GIF as a 1.1 MB H.264 clip.
+- `docs/demo.mp4` + poster: the demo as a 2.2 MB 1200×546 H.264 clip encoded from the original recording (the README's GIF is 9.5 MB and 256-colour).
 - `docs/.nojekyll`: Jekyll off. Two design docs contain `{{ }}` from Actions YAML and would fail a Jekyll build.
 - README Docs list and the release runbook point at the page.
 
@@ -504,7 +510,7 @@ curl -sI https://ozykhan.github.io/iina-airplay/demo.mp4 | grep -iE '^(HTTP|cont
 curl -sI https://ozykhan.github.io/iina-airplay/demo-poster.jpg | grep -iE '^(HTTP|content-type)'
 ```
 
-Expected: all three `HTTP/2 200`; `text/html`, `video/mp4` (length about 1.1 MB), `image/jpeg`.
+Expected: all three `HTTP/2 200`; `text/html`, `video/mp4` (length about 2.2 MB), `image/jpeg`.
 
 - [ ] **Step 7: Open the live page once in a browser**
 
