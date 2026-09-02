@@ -10,6 +10,10 @@
 <meta property="og:type" content="website">
 <meta property="og:url" content="https://ozykhan.github.io/iina-airplay/">
 <meta property="og:image" content="https://ozykhan.github.io/iina-airplay/demo-poster.jpg">
+<meta property="og:image:width" content="1200">
+<meta property="og:image:height" content="546">
+<meta property="og:image:alt" content="The iina-airplay sidebar casting a film from IINA to an Apple TV">
+<meta name="twitter:card" content="summary_large_image">
 <meta name="color-scheme" content="light dark">
 <style>
   :root {
@@ -18,7 +22,7 @@
     --text: #1d1d1f;
     --muted: #6e6e73;
     --rule: #e5e5ea;
-    --accent: #0071e3;
+    --accent: #0066cc;
     --accent-text: #ffffff;
     --code-bg: #e8e8ed;
     --shadow: 0 12px 32px rgba(0, 0, 0, 0.12);
@@ -61,7 +65,7 @@
   h1 { font-size: 2.6rem; font-weight: 700; }
   h2 { font-size: 1.6rem; font-weight: 600; margin-top: 0; }
   p { margin: 0 0 1em; }
-  main { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
+  main, .wrap { max-width: 1040px; margin: 0 auto; padding: 0 24px; }
   section { padding: 56px 0; border-top: 1px solid var(--rule); }
   section:first-of-type { border-top: 0; padding-top: 72px; }
 
@@ -123,6 +127,11 @@
     .hero .demo-col { order: -1; }
     .features { grid-template-columns: 1fr; }
     th { width: auto; white-space: normal; }
+  }
+
+  @media (prefers-reduced-motion: reduce) {
+    .demo video { display: none; }
+    .demo { background: #000 url(demo-poster.jpg) center / cover no-repeat; aspect-ratio: 1200 / 546; }
   }
 </style>
 </head>
@@ -195,14 +204,14 @@
 
   <section aria-labelledby="how">
     <h2 id="how">How it works</h2>
-    <p>IINA cannot AirPlay its own video output: it renders through mpv into a Metal layer, and macOS only exposes AirPlay video sending through AVFoundation. So this is a <strong>handoff, not a mirror</strong>. The plugin remuxes the current file to a live HLS stream (transcoding only when the codec demands it), serves it on your LAN, and a hidden video element in IINA's sidebar hands the stream URL to the TV through WebKit's own AirPlay picker. IINA keeps playing muted alongside, which is what makes the two-way remote control work.</p>
+    <p>IINA cannot AirPlay its own video output: it renders through mpv into a Metal/OpenGL layer, and macOS only exposes AirPlay video sending through AVFoundation. So this is a <strong>handoff, not a mirror</strong>. The plugin remuxes the current file to a live HLS stream (transcoding only when the codec demands it), serves it on your LAN, and a hidden video element in IINA's sidebar hands the stream URL to the TV through WebKit's own AirPlay picker. IINA keeps playing muted alongside, which is what makes the two-way remote control work.</p>
     <p>The full reasoning and the codec and subtitle handling matrix are in <a href="https://github.com/ozykhan/iina-airplay/blob/master/docs/feasibility.md">docs/feasibility.md</a>.</p>
   </section>
 
 </main>
 
 <footer>
-  <main>
+  <div class="wrap">
     <nav aria-label="Project links">
       <a href="https://github.com/ozykhan/iina-airplay">GitHub</a>
       <a href="https://github.com/ozykhan/iina-airplay/releases">Releases</a>
@@ -210,7 +219,7 @@
       <a href="https://github.com/ozykhan/iina-airplay/issues">Issues</a>
     </nav>
     <p>MIT licensed. Not affiliated with IINA or Apple. AirPlay and Apple TV are trademarks of Apple Inc.</p>
-  </main>
+  </div>
 </footer>
 </body>
 </html>

@@ -12,5 +12,5 @@ helper/helper
 # Claude Code's scratch worktrees; .claude/skills/ IS versioned.
 .claude/worktrees/
 
-# brainstorming visual companion sessions
+# superpowers scratch: brainstorm sessions, SDD ledgers and review diffs
 .superpowers/

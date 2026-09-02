@@ -272,7 +272,7 @@ gh run download <run-id> --name iina-airplay-package --dir /tmp/dryrun
 
 `https://ozykhan.github.io/iina-airplay/` is GitHub Pages serving the `docs/`
 folder of `master` (`docs/index.html`, plus `docs/.nojekyll` so Jekyll never
-tries to build the design docs, which contain `{{ }}` from Actions YAML). It
-deploys on every push to `master` and carries no version number, so nothing in
-the release choreography touches it and a fix to the page ships like a
-manifest fix: merge to `master`, wait a minute, reload.
+tries to build the markdown under `docs/`, which contains `{{ }}` from Actions
+YAML, this file included). It deploys on every push to `master` and carries no
+version number, so nothing in the release choreography touches it and a fix to
+the page ships like a manifest fix: merge to `master`, wait a minute, reload.
