@@ -125,6 +125,8 @@ installs off from updates.
 
 ## Docs
 
+- [ozykhan.github.io/iina-airplay](https://ozykhan.github.io/iina-airplay/) — the
+  landing page, served by GitHub Pages from `docs/` on `master`
 - `docs/feasibility.md` — why the direct route is closed, what's possible instead,
   and the codec/subtitle handling matrix
 - `docs/prototype.md` — the three throwaway experiments that de-risked the design
