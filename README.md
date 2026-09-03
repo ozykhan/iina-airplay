@@ -24,11 +24,12 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
 
 ### Limits, up front
 
-|                 |                                                                                                                             |
-| --------------- | --------------------------------------------------------------------------------------------------------------------------- |
-| macOS 15+       | Grant IINA the **Local Network** permission on first cast, or the TV can't reach the stream                                 |
-| Image subtitles | PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work                                                    |
+|                 |                                                                                                                                                                     |
+| --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| macOS 15+       | Grant IINA the **Local Network** permission on first cast, or the TV can't reach the stream                                                                         |
+| Image subtitles | PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work                                                                                            |
 | Start position  | The TV starts from the beginning, then jumps to where IINA was once packaging has reached that point. Best-effort: if the TV ends up elsewhere, IINA follows the TV |
+| Disk space      | A cast writes a second copy of the file (the HLS remux) to IINA's temp directory for as long as it runs; it is deleted when the cast stops or IINA quits            |
 
 <details>
 <summary><b>Why this is a handoff and not a mirror</b></summary>

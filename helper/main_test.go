@@ -300,3 +300,137 @@ func waitReady(t *testing.T, stdout io.Reader, timeout time.Duration) string {
 		}
 	}
 }
+
+// castFiles is what a real cast leaves in the output directory: the
+// playlist, the fMP4 init segment and at least one media segment. Every
+// teardown path must remove all of them (issue #12: a stopped cast used to
+// leave the whole remux in temp until the next cast).
+var castFiles = []string{"index.m3u8", "init.mp4", "seg_0000.m4s"}
+
+// castingStub writes a stub ffmpeg that lays down castFiles in out and then
+// runs tail — how the stub idles or exits.
+func castingStub(t *testing.T, out, tail string) string {
+	t.Helper()
+	stub := filepath.Join(t.TempDir(), "ffmpeg")
+	script := fmt.Sprintf("#!/bin/sh\necho '#EXTM3U' > %[1]s/index.m3u8\necho init > %[1]s/init.mp4\necho seg > %[1]s/seg_0000.m4s\n%[2]s\n", out, tail)
+	if err := os.WriteFile(stub, []byte(script), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	return stub
+}
+
+func startServe(t *testing.T, bin, out, stub string, parent int) (*exec.Cmd, io.Reader) {
+	t.Helper()
+	cmd := exec.Command(bin, "serve",
+		"-source", "/dev/null", "-out", out, "-ffmpeg", stub,
+		"-parent", fmt.Sprint(parent), "-duration", "60",
+		"-vcodec", "h264", "-acodec", "aac", "-achannels", "2", "-vmap", "0", "-amap", "1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+	return cmd, stdout
+}
+
+func waitExit(t *testing.T, cmd *exec.Cmd, timeout time.Duration) {
+	t.Helper()
+	done := make(chan error, 1)
+	go func() { done <- cmd.Wait() }()
+	select {
+	case <-done:
+	case <-time.After(timeout):
+		t.Fatalf("helper still running after %v", timeout)
+	}
+}
+
+func assertSwept(t *testing.T, out string) {
+	t.Helper()
+	for _, f := range append(append([]string{}, castFiles...), "helper.pid") {
+		if _, err := os.Stat(filepath.Join(out, f)); err == nil {
+			t.Errorf("%s left behind in the output dir", f)
+		}
+	}
+}
+
+func TestStopSweepsOutDir(t *testing.T) {
+	bin := buildHelper(t)
+	out := t.TempDir()
+	stub := castingStub(t, out, "trap 'exit 0' TERM\nsleep 60")
+	cmd, stdout := startServe(t, bin, out, stub, os.Getpid())
+	waitReady(t, stdout, 15*time.Second)
+	for _, f := range castFiles {
+		if _, err := os.Stat(filepath.Join(out, f)); err != nil {
+			t.Fatalf("stub did not write %s: %v", f, err)
+		}
+	}
+
+	if err := exec.Command(bin, "stop", "-out", out).Run(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	waitExit(t, cmd, 5*time.Second)
+	assertSwept(t, out)
+}
+
+// After ffmpeg has finished (VOD complete) the helper keeps serving until
+// killed — a distinct branch of the serve loop that must sweep too.
+func TestStopAfterPackagedSweepsOutDir(t *testing.T) {
+	bin := buildHelper(t)
+	out := t.TempDir()
+	stub := castingStub(t, out, "echo progress=end\nexit 0")
+	cmd, stdout := startServe(t, bin, out, stub, os.Getpid())
+	waitReady(t, stdout, 15*time.Second)
+	// Give the serve loop time to consume ffmpeg's exit before stopping.
+	time.Sleep(500 * time.Millisecond)
+
+	if err := exec.Command(bin, "stop", "-out", out).Run(); err != nil {
+		t.Fatalf("stop: %v", err)
+	}
+	waitExit(t, cmd, 5*time.Second)
+	assertSwept(t, out)
+}
+
+// IINA quitting (or crashing) is the other way a cast ends; the watchdog
+// path must sweep just like the signal path.
+func TestParentDeathSweepsOutDir(t *testing.T) {
+	bin := buildHelper(t)
+	out := t.TempDir()
+	parent := exec.Command("/bin/sleep", "60")
+	if err := parent.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { parent.Process.Kill(); parent.Wait() })
+	stub := castingStub(t, out, "trap 'exit 0' TERM\nsleep 60")
+	cmd, stdout := startServe(t, bin, out, stub, parent.Process.Pid)
+	waitReady(t, stdout, 15*time.Second)
+
+	parent.Process.Kill()
+	parent.Wait()
+	waitExit(t, cmd, 10*time.Second) // watchdog polls every 2s
+	assertSwept(t, out)
+}
+
+// A cast that fails part-way leaves partial segments; the error exit must
+// sweep them as well.
+func TestFailedCastSweepsOutDir(t *testing.T) {
+	bin := buildHelper(t)
+	out := t.TempDir()
+	stub := castingStub(t, out, "echo 'boom' >&2\nexit 1")
+	cmd, stdout := startServe(t, bin, out, stub, os.Getpid())
+	b, _ := io.ReadAll(stdout)
+	waitExit(t, cmd, 10*time.Second)
+	sawError := false
+	for _, line := range strings.Split(strings.TrimSpace(string(b)), "\n") {
+		var ev map[string]any
+		if json.Unmarshal([]byte(line), &ev) == nil && ev["event"] == "error" {
+			sawError = true
+		}
+	}
+	if !sawError {
+		t.Fatalf("expected an error event, got:\n%s", b)
+	}
+	assertSwept(t, out)
+}

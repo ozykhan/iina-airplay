@@ -30,6 +30,10 @@ func main() {
 			fmt.Fprintln(os.Stderr, err)
 			os.Exit(1)
 		}
+		// The serving instance sweeps its own output on SIGTERM, and
+		// TakeOver waited for it. This catches a helper that died without
+		// sweeping (kill -9): after TakeOver nobody else owns the directory.
+		cleanOutDir(*out)
 	default:
 		fmt.Fprintf(os.Stderr, "unknown command %q\n", os.Args[1])
 		os.Exit(2)
@@ -63,7 +67,17 @@ func runServe(argv []string) {
 	// WritePidfile itself failed) — so every error exit leaves no stale
 	// pidfile behind, matching the WatchParent-triggered exit path below.
 	var pidfile string
+	// outOwned flips once TakeOver has cleared the output directory of any
+	// previous instance. Only then may an exit sweep it: before that, the
+	// files there may belong to a cast another instance is still serving.
+	outOwned := false
+	// stopJob is replaced once ffmpeg is running; fail can run before that.
+	stopJob := func() {}
 	fail := func(msg string) {
+		stopJob()
+		if outOwned {
+			cleanOutDir(c.OutDir)
+		}
 		if pidfile != "" {
 			os.Remove(pidfile)
 		}
@@ -84,12 +98,10 @@ func runServe(argv []string) {
 	if err := TakeOver(pidfile); err != nil {
 		fail("stale instance: " + err.Error())
 	}
-	for _, pat := range []string{"index.m3u8", "master.m3u8", "*_vtt.m3u8", "*.vtt", "init.mp4", "seg_*.m4s"} {
-		matches, _ := filepath.Glob(filepath.Join(c.OutDir, pat))
-		for _, m := range matches {
-			os.Remove(m)
-		}
-	}
+	outOwned = true
+	// Every exit path below sweeps, so this only matters for a previous
+	// instance that died without getting to its own sweep (kill -9).
+	cleanOutDir(c.OutDir)
 	if err := WritePidfile(pidfile); err != nil {
 		fail(err.Error())
 	}
@@ -106,10 +118,19 @@ func runServe(argv []string) {
 		fail(err.Error())
 	}
 
-	stopJob, done := RunJob(c, os.Stdout)
+	var done <-chan error
+	stopJob, done = RunJob(c, os.Stdout)
+
+	// teardown is every non-error way out: stop ffmpeg (blocks until it has
+	// exited), then sweep. The remux leaves with the cast, not at the next
+	// one — a UHD remux is tens of gigabytes of temp (issue #12).
+	teardown := func() {
+		stopJob()
+		cleanOutDir(c.OutDir)
+	}
 
 	WatchParent(parent, func() {
-		stopJob()
+		teardown()
 		os.Remove(pidfile)
 		os.Exit(0)
 	})
@@ -151,7 +172,6 @@ func runServe(argv []string) {
 					ready = true
 					readyTick.Stop()
 				} else if time.Now().After(readyDeadline) {
-					stopJob()
 					fail("packaging produced no playlist within 120s")
 				}
 			}
@@ -171,10 +191,11 @@ func runServe(argv []string) {
 			}
 			// Keep serving completed VOD until killed.
 			<-sigs
+			teardown()
 			Emit(os.Stdout, "stopped", nil)
 			return
 		case <-sigs:
-			stopJob()
+			teardown()
 			Emit(os.Stdout, "stopped", nil)
 			return
 		}
