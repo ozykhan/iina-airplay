@@ -28,7 +28,7 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
 | --------------- | --------------------------------------------------------------------------------------------------------------------------- |
 | macOS 15+       | Grant IINA the **Local Network** permission on first cast, or the TV can't reach the stream                                 |
 | Image subtitles | PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work                                                    |
-| Start position  | Playback starts at the beginning of the file, not your current position — the trade for a fully seekable timeline on the TV |
+| Start position  | The TV starts from the beginning, then jumps to where IINA was once packaging has reached that point. Best-effort: if the TV ends up elsewhere, IINA follows the TV |
 
 <details>
 <summary><b>Why this is a handoff and not a mirror</b></summary>
