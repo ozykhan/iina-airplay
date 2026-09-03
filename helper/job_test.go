@@ -246,3 +246,22 @@ func TestHasSubAndPlaylistName(t *testing.T) {
 		t.Fatalf("external-sub config: HasSub=%v playlist=%q", c.HasSub(), c.PlaylistName())
 	}
 }
+
+// stop() must not return until ffmpeg is gone: the caller sweeps the output
+// directory right after, and a segment ffmpeg is still flushing would come
+// back. A stub that ignores TERM (sleep inherits the ignored disposition)
+// proves the KILL escalation as well.
+func TestRunJobStopWaitsForExit(t *testing.T) {
+	stub := writeStubFFmpeg(t, `trap '' TERM; sleep 30`)
+	c := baseCfg()
+	c.FFmpeg = stub
+	var buf bytes.Buffer
+	stop, done := RunJob(c, &buf)
+	time.Sleep(200 * time.Millisecond)
+	stop()
+	select {
+	case <-done:
+	default:
+		t.Fatal("stop() returned before ffmpeg exited")
+	}
+}

@@ -95,6 +95,11 @@ build recipe and the compliance obligations are in `docs/distribution.md`.
   Remote URLs as *sources* are declined: the bundled ffmpeg is built `--disable-network`.
 - No frame-accurate position sync between IINA and the Apple TV. The muted mirror corrects drift
   toward the TV rather than trying to be sample-exact.
+- **A cast costs disk for its duration.** The remux is a byte-for-byte copy of the video and audio
+  bitstreams into `@tmp/hls`, so a UHD remux means tens of gigabytes of temp while the cast runs.
+  `-hls_playlist_type event` is what makes the TV timeline seekable, so segments cannot be expired
+  mid-cast; instead the helper sweeps the directory on every exit path — stop, IINA quitting or
+  crashing, a failed cast — and again at the next start in case it was killed outright.
 - **Gatekeeper — resolved, not open.** A binary inside a package IINA downloads and extracts
   itself picks up only `com.apple.provenance`, never `com.apple.quarantine`, so ad-hoc signing
   is enough and no Developer ID is needed. Verified against IINA's source *and* by experiment,

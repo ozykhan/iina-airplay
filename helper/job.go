@@ -10,6 +10,7 @@ import (
 	"strings"
 	"sync/atomic"
 	"syscall"
+	"time"
 )
 
 type JobConfig struct {
@@ -146,6 +147,9 @@ func RunJob(c JobConfig, out io.Writer) (func(), <-chan error) {
 
 	// Flag to track when job has completed (0 = running, 1 = done)
 	var jobDone atomic.Int32
+	// Closed once ffmpeg has exited and its result is on done, so stop can
+	// block until the process is really gone.
+	finished := make(chan struct{})
 
 	go func() {
 		sc := bufio.NewScanner(stdout)
@@ -173,8 +177,16 @@ func RunJob(c JobConfig, out io.Writer) (func(), <-chan error) {
 		// Mark job as done before sending to channel
 		jobDone.Store(1)
 		done <- werr
+		close(finished)
 	}()
 
+	// stop signals ffmpeg's process group and returns only once ffmpeg has
+	// exited: the caller sweeps the output directory next, and a segment
+	// ffmpeg was still flushing would otherwise reappear after the sweep.
+	// ffmpeg honours SIGTERM within a fraction of a second; a process that
+	// ignores it is SIGKILLed after a grace period chosen to stay inside the
+	// 3s the `stop` subcommand's TakeOver waits for the old instance.
+	// Safe to call more than once and after done has fired.
 	stop := func() {
 		// Only signal if job is still running
 		if jobDone.Load() == 0 {
@@ -183,6 +195,16 @@ func RunJob(c JobConfig, out io.Writer) (func(), <-chan error) {
 			if c, ok := stdout.(io.Closer); ok {
 				c.Close()
 			}
+		}
+		select {
+		case <-finished:
+			return
+		case <-time.After(2 * time.Second):
+		}
+		syscall.Kill(-cmd.Process.Pid, syscall.SIGKILL)
+		select {
+		case <-finished:
+		case <-time.After(time.Second):
 		}
 	}
 	return stop, done
