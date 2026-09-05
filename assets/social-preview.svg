@@ -1,0 +1,93 @@
+<!--
+  iina-airplay social preview — 1280×640, the size GitHub renders repository cards at.
+
+  The mark is Apple's AirPlay symbol drawn to its own proportions, in IINA's colours:
+  screen 16:9, apex 43% down into it, triangle 0.67 as tall as it is wide, base 22% of
+  the screen height below the bottom rule, rule weight 4.5% of the screen width. Corners
+  are rounded rather than square, which is the one deliberate departure.
+
+  The bottom rule is broken on both sides so it never touches the triangle, as in the
+  real symbol. That break is cut by #cut, a mask holding a copy of the triangle dilated
+  by 26px on every side — so the gap follows the triangle's edges exactly and stays even
+  the whole way along, and it stays correct if the triangle is ever moved or resized.
+
+  Colours are sampled from IINA.app's own AppIcon.icns: the play triangle's gradient
+  runs #006BC8 → #009DFE → #00C0D7, and the violet of its pause bars is #673AF6. IINA's
+  logo itself is deliberately not used — the association is carried by material only.
+
+  This file is the source; assets/social-preview.png is rendered from it. The exact
+  render command is in docs/superpowers/specs/2026-09-06-social-preview-design.md.
+  (It cannot live in this comment: XML forbids a double hyphen inside one, and every
+  flag it passes starts with a pair.)
+-->
+<svg viewBox="0 0 1280 640" width="1280" height="640" xmlns="http://www.w3.org/2000/svg">
+  <defs>
+    <!-- The screen's rule. Runs cyan→blue from the top-left corner. -->
+    <linearGradient id="wire" x1="0" y1="0" x2="1" y2="1">
+      <stop offset="0" stop-color="#00C6D2"/>
+      <stop offset="0.55" stop-color="#009DFE"/>
+      <stop offset="1" stop-color="#0060C4"/>
+    </linearGradient>
+
+    <!-- The triangle. Same gradient, run the other way, so the two meet in the middle. -->
+    <linearGradient id="beam" x1="0" y1="0" x2="1" y2="0.7">
+      <stop offset="0" stop-color="#0060C4"/>
+      <stop offset="0.55" stop-color="#009DFE"/>
+      <stop offset="1" stop-color="#00C6D2"/>
+    </linearGradient>
+
+    <!-- Ambient light. Blue behind the mark, violet low and left, so IINA's two accent
+         colours are both present without borrowing its logo. -->
+    <radialGradient id="glowBlue" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#0A78E0" stop-opacity="0.34"/>
+      <stop offset="1" stop-color="#0A78E0" stop-opacity="0"/>
+    </radialGradient>
+    <radialGradient id="glowViolet" cx="0.5" cy="0.5" r="0.5">
+      <stop offset="0" stop-color="#673AF6" stop-opacity="0.26"/>
+      <stop offset="1" stop-color="#673AF6" stop-opacity="0"/>
+    </radialGradient>
+
+    <filter id="soft" x="-60%" y="-60%" width="220%" height="220%">
+      <feGaussianBlur stdDeviation="18"/>
+    </filter>
+
+    <!-- Breaks the bottom rule: white everywhere except a 26px-dilated triangle. -->
+    <mask id="cut" maskUnits="userSpaceOnUse" x="0" y="0" width="1280" height="640">
+      <rect width="1280" height="640" fill="#fff"/>
+      <path d="M985 270 L1147 487 L823 487 Z"
+            fill="#000" stroke="#000" stroke-width="70" stroke-linejoin="round"/>
+    </mask>
+  </defs>
+
+  <rect width="1280" height="640" fill="#0B0B0D"/>
+  <ellipse cx="1010" cy="300" rx="470" ry="430" fill="url(#glowBlue)"/>
+  <ellipse cx="700" cy="560" rx="420" ry="300" fill="url(#glowViolet)"/>
+
+  <!-- The screen: 486×274 at (742,153), centred on the canvas once the triangle is
+       counted, since the triangle hangs 22% of the screen height below it. -->
+  <rect x="742" y="153" width="486" height="274" rx="68"
+        fill="none" stroke="url(#wire)" stroke-width="28" mask="url(#cut)"/>
+
+  <g filter="url(#soft)" opacity="0.42">
+    <path d="M985 270 L1147 487 L823 487 Z" fill="#0A8FE8"/>
+  </g>
+  <path d="M985 270 L1147 487 L823 487 Z"
+        fill="url(#beam)" stroke="url(#beam)" stroke-width="18" stroke-linejoin="round"/>
+
+  <text x="96" y="272"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Display', Helvetica, sans-serif"
+        font-size="92" font-weight="700" letter-spacing="-4" fill="#F5F5F7">iina-airplay</text>
+  <text x="99" y="338"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, sans-serif"
+        font-size="34" fill="#A1A1A6">Cast what IINA is playing</text>
+  <text x="99" y="386"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, sans-serif"
+        font-size="34" fill="#A1A1A6">straight to your Apple&#160;TV.</text>
+  <rect x="99" y="430" width="72" height="2" rx="1" fill="rgba(255,255,255,0.20)"/>
+  <text x="99" y="484"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, sans-serif"
+        font-size="23" font-weight="500" fill="#6E6E73">No mirroring &#183; no re-encode</text>
+  <text x="99" y="518"
+        font-family="-apple-system, BlinkMacSystemFont, 'SF Pro Text', Helvetica, sans-serif"
+        font-size="23" font-weight="500" fill="#6E6E73">IINA stays the remote</text>
+</svg>
