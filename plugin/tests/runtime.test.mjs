@@ -22,7 +22,12 @@ function loadPlugin(opts = {}) {
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
   let menuCallback = null;
   let loadedFile = null;
+  let loads = 0;
   let shown = 0;
+  // IINA's sidebar.loadFile throws until the player window exists (see
+  // JavascriptAPISidebarView.swift); a plugin loaded at launch runs before
+  // that, one enabled from Settings runs after.
+  let windowLoaded = opts.windowLoaded !== undefined ? opts.windowLoaded : true;
 
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
@@ -40,7 +45,11 @@ function loadPlugin(opts = {}) {
       addItem: (it) => { menuCallback = it.cb; },
     },
     sidebar: {
-      loadFile: (f) => { loadedFile = f; for (const k of Object.keys(messages)) delete messages[k]; },
+      loadFile: (f) => {
+        if (!windowLoaded) throw new Error("sidebar.loadFile called when window is not available.");
+        loadedFile = f; loads++;
+        for (const k of Object.keys(messages)) delete messages[k];
+      },
       onMessage: (name, cb) => { messages[name] = cb; },
       postMessage: (name, data) => posted.push([name, JSON.parse(JSON.stringify(data))]),
       show: () => { shown++; },
@@ -79,7 +88,12 @@ function loadPlugin(opts = {}) {
     },
     state: () => posted.filter(([n]) => n === "state").at(-1)?.[1],
     loadedFile: () => loadedFile,
+    loads: () => loads,
     shown: () => shown,
+    loadWindow: () => {
+      windowLoaded = true;
+      if (events["iina.window-loaded"]) events["iina.window-loaded"]();
+    },
   };
 }
 
@@ -93,6 +107,37 @@ test("menu item opens the sidebar and starts a cast", () => {
   assert.equal(p.shown(), 1);
   assert.equal(serves(p).length, 1);
   assert.match(serves(p)[0].bin, /\/bin\/airplay-helper$/);
+});
+
+// Issue #20: Info.json declares a sidebarTab, so IINA shows an "AirPlay" tab
+// the user can open without ever touching the Plugins menu. That tab is an
+// empty WKWebView until the plugin calls sidebar.loadFile, so the page (and
+// its Start casting button) must be loaded as soon as the window exists,
+// not only from the menu item.
+test("the sidebar tab works when opened directly, without the menu item", () => {
+  const p = loadPlugin();               // window already up: plugin enabled from Settings
+  assert.equal(p.loadedFile(), "sidebar.html");
+  p.send("getState", {});
+  assert.equal(p.state().phase, "idle");
+  p.send("start", {});
+  assert.equal(serves(p).length, 1);
+});
+
+test("a plugin loaded before the window loads the sidebar page on window-loaded", () => {
+  const p = loadPlugin({ windowLoaded: false }); // normal launch order
+  assert.equal(p.loadedFile(), null, "must not blow up before the window exists");
+  p.loadWindow();
+  assert.equal(p.loadedFile(), "sidebar.html");
+  p.send("getState", {});
+  assert.equal(p.state().phase, "idle");
+});
+
+test("the menu item shows the already-loaded page instead of reloading it", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  assert.equal(p.loads(), 1, "a reload would tear down the page's <video> mid-cast");
+  assert.equal(p.shown(), 1);
+  assert.equal(serves(p).length, 1);
 });
 
 test("the page can start a cast after stopping, without reloading the plugin", () => {
