@@ -1,7 +1,8 @@
 // plugin/main.js — orchestration. HARD RULE (docs/prototype.md): never call
 // sidebar.* from utils.exec callbacks/promises; IINA runs those off the main
-// thread and sidebar.show() SIGABRTs the app. Sidebar calls live only in the
-// menu callback and onMessage handlers; the page polls "getState".
+// thread and sidebar.show() SIGABRTs the app. Sidebar calls live only in
+// main-thread contexts: plugin load, the iina.window-loaded event, the menu
+// callback and onMessage handlers; the page polls "getState".
 
 // ---- pure functions (node-testable) ----
 
@@ -457,8 +458,23 @@ if (typeof iina !== "undefined") {
     state = { phase: "idle", url: null, pct: 0, msg: null };
   }
 
-  function openSidebar() {
-    sidebar.loadFile("sidebar.html"); // clears message listeners — register after
+  // Info.json's sidebarTab makes IINA show an "AirPlay" tab in the sidebar's
+  // Plugins section, which the user can open without ever touching the
+  // Plugins menu. That tab is an empty WKWebView until the plugin calls
+  // sidebar.loadFile (IINA never loads anything into it itself), so the page
+  // must be loaded as soon as the window exists — not only from the menu
+  // item, or the tab is blank and there is no Start casting button (#20).
+  // loadFile throws before iina.window-loaded; a plugin loaded at launch runs
+  // before that, one enabled from Settings runs after, so both paths are
+  // covered: try now, and again when the window reports in.
+  var sidebarLoaded = false;
+  function loadSidebar(force) {
+    if (sidebarLoaded && !force) return;
+    try {
+      sidebar.loadFile("sidebar.html"); // clears message listeners — register after
+    } catch (e) {
+      return; // no window yet; iina.window-loaded will retry
+    }
     sidebar.onMessage("getState", function () {
       reapMirror();
       sidebar.postMessage("state", stateForPage()); // onMessage handlers are main-thread safe
@@ -485,6 +501,17 @@ if (typeof iina !== "undefined") {
       if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
       if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);
     });
+    sidebarLoaded = true;
+  }
+  // Force on window-loaded: nothing can be casting before the window exists,
+  // so a reload here is harmless, and it guards against a pre-window loadFile
+  // that failed without throwing.
+  event.on("iina.window-loaded", function () { loadSidebar(true); });
+  loadSidebar(false);
+
+  function openSidebar() {
+    loadSidebar(false); // already loaded in the normal case; don't reload a
+                        // live page, that would tear down its <video> mid-cast
     sidebar.show();
   }
 

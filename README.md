@@ -61,6 +61,19 @@ will tell you to reinstall through IINA when that happens.
 On macOS 15+, grant IINA the **Local Network** permission the first time it
 casts, or the Apple TV cannot reach the stream.
 
+## Cast
+
+Play a file, then either:
+
+- pick **Plugins → AirPlay → Cast to TV** from the menu bar, or
+- open the sidebar's **Plugins** pane, choose the **AirPlay** tab, and press
+  **Start casting**.
+
+The sidebar packages the file, then **Send to TV** opens the AirPlay picker.
+Pick the TV and IINA becomes the remote. The plugin's page under
+Settings → Plugins only enables it and shows its log; the cast controls are
+in the sidebar.
+
 Everything the plugin needs ships inside the package — a pinned LGPL build of
 ffmpeg and the Go helper. There are no prerequisites and nothing is downloaded
 at runtime.
