@@ -1,0 +1,4 @@
+User-agent: *
+Allow: /
+
+Sitemap: https://ozykhan.github.io/iina-airplay/sitemap.xml
