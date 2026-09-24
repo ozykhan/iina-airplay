@@ -148,7 +148,7 @@
   var initialSeekPending = false;
   var ended = false;
   var localErr = "";        // page-side media failure, distinct from state.msg
-  var primaryAct = "start"; // what #primary does: "start" | "pick" | "stop"
+  var primaryAct = "start"; // what #primary does: "start" | "reload" | "pick" | "stop"
   var secondaryAct = null;  // what #secondary does: null | "pick" | "stop"
 
   function applySync(sync) {
@@ -224,9 +224,13 @@
       // A page-side media failure is still a failed cast from the user's side,
       // so it takes the same row. state.msg wins when both are set: main.js
       // knows why the pipeline died, the <video> element only knows it choked.
+      // While the cast is still live only the page failed: the helper is
+      // still serving, so Try again reloads the stream rather than asking
+      // main.js to start (a no-op mid-cast) or repackaging from scratch.
       r = { dot: "bad", headline: "Couldn't cast", sub: s.msg || localErr,
             warn: true, meter: false, pct: 0, done: false,
-            primary: "Try again", act: "start", accent: true, off: false,
+            primary: "Try again", act: casting ? "reload" : "start",
+            accent: true, off: false,
             secondary: casting ? "Stop casting" : null,
             sact: casting ? "stop" : null };
     } else if (!casting) {
@@ -301,7 +305,11 @@
   v.addEventListener("ended", function () { ended = true; });
   primary.onclick = function () {
     if (primaryAct === "pick") showPicker();
-    else if (primaryAct === "stop") {
+    else if (primaryAct === "reload") {
+      // render() reloads s.url once loadedURL is cleared; ask for state now
+      // instead of waiting out the poll.
+      localErr = ""; teardownLocal(); iina.postMessage("getState", {});
+    } else if (primaryAct === "stop") {
       localErr = ""; teardownLocal(); iina.postMessage("stop", {});
     } else {
       localErr = ""; teardownLocal(); iina.postMessage("start", {});
