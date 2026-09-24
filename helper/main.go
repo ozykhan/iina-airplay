@@ -107,7 +107,11 @@ func runServe(argv []string) {
 	}
 	defer os.Remove(pidfile)
 
-	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang)
+	var srcSize int64
+	if fi, serr := os.Stat(c.Source); serr == nil {
+		srcSize = fi.Size()
+	}
+	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, EstimateBandwidth(srcSize, c.Duration))
 	if err != nil {
 		fail(err.Error())
 	}

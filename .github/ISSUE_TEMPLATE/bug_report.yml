@@ -56,10 +56,13 @@ body:
   - type: textarea
     id: logs
     attributes:
-      label: Plugin console log
+      label: IINA log
       description: >
-        IINA → Settings → Plugins → select the plugin → console. Copy the lines
-        from the failed attempt.
+        IINA's log is off by default. In IINA → Settings → Advanced, turn on
+        "Enable advanced settings" and "Enable logging to file", restart IINA,
+        and reproduce the problem. Then open Window → Log Viewer (⌃⌘L), pick
+        the subsystem ending in "- AirPlay", and copy the lines from the failed
+        attempt.
       render: text
 
   - type: checkboxes

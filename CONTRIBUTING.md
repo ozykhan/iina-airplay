@@ -37,9 +37,13 @@ directory with IINA.
 
 Then **restart IINA** and enable the plugin under Settings → Plugins. Restarting
 is not optional: the sidebar and standalone window are `WKWebView`s and don't
-hot-reload their JS. Plugin logs live in the same settings panel — select the
-plugin and open its console. Safari's Web Inspector can also attach to the
-plugin's webviews (`isInspectable` is on).
+hot-reload their JS. Plugin logs (`console.log` in `main.js`) go to IINA's log,
+which is off by default: turn on **Enable advanced settings** and **Enable
+logging to file** under Settings → Advanced, then restart IINA — the switch is
+read at launch. Open **Window → Log Viewer** (⌃⌘L) and pick the subsystem
+ending in `- AirPlay`; the files are under `~/Library/Logs/com.colliderli.iina/`.
+Safari's Web Inspector can also attach to the plugin's webviews
+(`isInspectable` is on) for the sidebar page's own console.
 
 On macOS 15+, grant IINA the **Local Network** permission the first time it
 serves a stream, or the Apple TV cannot reach it.

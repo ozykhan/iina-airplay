@@ -72,3 +72,51 @@ func TestRewriteIgnoresNonSubtitleMediaLines(t *testing.T) {
 		t.Fatalf("audio media line must pass through untouched:\ngot:  %s\nwant: %s", got, in)
 	}
 }
+
+// What ffmpeg's hlsenc writes to master.m3u8 while a stream-copy job is still
+// running: the bitrate of a copied stream is unknown until the trailer, so the
+// variant line is left out until packaging ends (issue #26).
+const ffmpegMasterNoVariant = `#EXTM3U
+#EXT-X-VERSION:7
+#EXT-X-MEDIA:TYPE=SUBTITLES,GROUP-ID="subs",NAME="subtitle_0",DEFAULT=NO,AUTOSELECT=YES,URI="index_vtt.m3u8"
+
+`
+
+func TestEnsureVariantAddsMissingStreamInf(t *testing.T) {
+	out := EnsureVariant(ffmpegMasterNoVariant, 5000000)
+	want := "#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES=\"subs\"\nindex.m3u8\n"
+	if !strings.HasSuffix(out, want) {
+		t.Fatalf("variant not appended:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "#EXTM3U\n#EXT-X-VERSION:7\n#EXT-X-MEDIA:") {
+		t.Fatalf("header lines disturbed:\n%s", out)
+	}
+}
+
+func TestEnsureVariantLeavesFfmpegVariantAlone(t *testing.T) {
+	if got := EnsureVariant(ffmpegMaster, 5000000); got != ffmpegMaster {
+		t.Fatalf("a master that already has a variant must pass through:\n%s", got)
+	}
+}
+
+func TestEnsureVariantWithoutSubtitleGroup(t *testing.T) {
+	out := EnsureVariant("#EXTM3U\n#EXT-X-VERSION:7\n", 5000000)
+	if !strings.HasSuffix(out, "#EXT-X-STREAM-INF:BANDWIDTH=5000000\nindex.m3u8\n") {
+		t.Fatalf("no SUBTITLES attr expected without a subtitle group:\n%s", out)
+	}
+}
+
+func TestEstimateBandwidth(t *testing.T) {
+	// 1 GB over 1000 s is 8 Mbit/s; 10% headroom on top.
+	if got := EstimateBandwidth(1_000_000_000, 1000); got != 8_800_000 {
+		t.Fatalf("got %d, want 8800000", got)
+	}
+	for _, c := range []struct {
+		size int64
+		dur  float64
+	}{{0, 1000}, {1_000_000_000, 0}, {-1, -1}} {
+		if got := EstimateBandwidth(c.size, c.dur); got != fallbackBandwidth {
+			t.Fatalf("EstimateBandwidth(%d, %v) = %d, want fallback %d", c.size, c.dur, got, fallbackBandwidth)
+		}
+	}
+}

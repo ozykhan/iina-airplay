@@ -15,7 +15,7 @@ func TestServerMIMEAndRange(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "index.m3u8"), []byte("#EXTM3U\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.m4s"), []byte("0123456789"), 0o644)
 
-	port, shutdown, err := StartServer(dir, "", "")
+	port, shutdown, err := StartServer(dir, "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestServerRewritesMasterPlaylist(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(master), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.vtt"), []byte("WEBVTT\n"), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en")
+	port, shutdown, err := StartServer(dir, "English", "en", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestServerRewritesMasterPlaylist(t *testing.T) {
 
 func TestServerMissingMasterFallsThrough(t *testing.T) {
 	dir := t.TempDir()
-	port, shutdown, err := StartServer(dir, "", "")
+	port, shutdown, err := StartServer(dir, "", "", 0)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -99,5 +99,34 @@ func TestServerMissingMasterFallsThrough(t *testing.T) {
 	resp.Body.Close()
 	if resp.StatusCode != http.StatusNotFound {
 		t.Fatalf("missing master should 404, got %d", resp.StatusCode)
+	}
+}
+
+// Issue #26: while ffmpeg is still packaging a stream copy, its master.m3u8
+// names the subtitle rendition but no variant, and AVFoundation (WebKit's
+// <video>, the Apple TV) rejects it outright. The served master must carry a
+// variant from the first request.
+func TestServerAddsVariantToIncompleteMaster(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(ffmpegMasterNoVariant), 0o644)
+
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdown()
+
+	resp, err := http.Get(fmt.Sprintf("http://127.0.0.1:%d/master.m3u8", port))
+	if err != nil {
+		t.Fatal(err)
+	}
+	body, _ := io.ReadAll(resp.Body)
+	resp.Body.Close()
+	s := string(body)
+	if !strings.Contains(s, "#EXT-X-STREAM-INF:BANDWIDTH=7000000,SUBTITLES=\"subs\"\nindex.m3u8\n") {
+		t.Fatalf("served master has no variant:\n%s", s)
+	}
+	if !strings.Contains(s, `NAME="English"`) {
+		t.Fatalf("subtitle rewrite must still apply:\n%s", s)
 	}
 }

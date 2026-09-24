@@ -1,6 +1,48 @@
 package main
 
-import "strings"
+import (
+	"strconv"
+	"strings"
+)
+
+// fallbackBandwidth is the BANDWIDTH advertised when the source's size or
+// duration is unknown. With a single variant nothing is chosen by it; the
+// attribute just has to be present and plausible.
+const fallbackBandwidth = 20_000_000
+
+// EstimateBandwidth derives a BANDWIDTH value (bits/s) from the source file's
+// size and duration, with 10% headroom — the same margin ffmpeg adds.
+func EstimateBandwidth(sizeBytes int64, duration float64) int {
+	if sizeBytes <= 0 || duration <= 0 {
+		return fallbackBandwidth
+	}
+	return int(float64(sizeBytes) * 8 / duration * 1.1)
+}
+
+// EnsureVariant adds the #EXT-X-STREAM-INF line an ffmpeg master playlist
+// lacks while a stream-copy job is still running. hlsenc only learns a copied
+// stream's bitrate at the trailer, so until packaging ends its master names
+// the subtitle rendition and no variant at all — and AVFoundation rejects
+// that playlist (media error 3 in WebKit; issue #26). A master that already
+// has a variant passes through untouched.
+func EnsureVariant(content string, bandwidth int) string {
+	if strings.Contains(content, "#EXT-X-STREAM-INF:") {
+		return content
+	}
+	inf := "#EXT-X-STREAM-INF:BANDWIDTH=" + strconv.Itoa(bandwidth)
+	for _, line := range strings.Split(content, "\n") {
+		if !strings.HasPrefix(line, "#EXT-X-MEDIA:") || !strings.Contains(line, "TYPE=SUBTITLES") {
+			continue
+		}
+		for _, a := range splitAttrs(strings.TrimPrefix(line, "#EXT-X-MEDIA:")) {
+			if group, ok := strings.CutPrefix(a, "GROUP-ID="); ok {
+				inf += ",SUBTITLES=" + group
+			}
+		}
+		break
+	}
+	return strings.TrimRight(content, "\n") + "\n" + inf + "\nindex.m3u8\n"
+}
 
 // RewriteMasterPlaylist fixes up the subtitle rendition line of an
 // ffmpeg-written HLS master playlist. Older ffmpeg hardcodes DEFAULT=NO on
