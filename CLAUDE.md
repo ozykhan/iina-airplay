@@ -105,7 +105,12 @@ Hard-won constraints from the prototype runs (details in `docs/prototype.md`):
 /Applications/IINA.app/Contents/MacOS/iina-plugin create <name>
 ```
 
-Plugin logs: IINA Settings → Plugins → select the plugin → console. There is also a
+Plugin logs: there is **no console in IINA's plugin settings** (1.4.4). Plugin
+`console.log` goes to IINA's own log at debug level, and IINA logs nothing at all
+unless Settings → Advanced has both **Enable advanced settings** and **Enable
+logging to file** on — read once at launch, so restart IINA after flipping them
+(`Logger.swift`, `Logger.enabled`). Then **Window → Log Viewer** (⌃⌘L), subsystem
+`player<N> - AirPlay`; files under `~/Library/Logs/com.colliderli.iina/`. There is also a
 JS dev tool (`isInspectable` is on for macOS 13.3+, so Safari's Web Inspector can
 attach to plugin WebViews).
 

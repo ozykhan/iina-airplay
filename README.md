@@ -106,8 +106,10 @@ if you'll also run `make pack` / `make ffmpeg` (see above): `brew install nasm`.
 
 Restart IINA to pick up plugin changes (`standaloneWindow`/`sidebar` are
 WKWebViews and don't hot-reload JS on their own). Enable the plugin under
-IINA Settings → Plugins. Plugin logs are in the same panel — select the plugin
-and open its console.
+IINA Settings → Plugins. Plugin logs go to IINA's log, which is off by default:
+turn on **Enable advanced settings** and **Enable logging to file** under
+Settings → Advanced, restart IINA, then open **Window → Log Viewer** (⌃⌘L) and
+pick the subsystem ending in `- AirPlay`.
 
 On macOS 15+, grant IINA the **Local Network** permission the first time it
 tries to serve, or the Apple TV can't reach the stream.
