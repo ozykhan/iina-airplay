@@ -22,10 +22,12 @@ func init() {
 
 // StartServer serves dir. master.m3u8 is rewritten on the way out
 // (RewriteMasterPlaylist) so the subtitle rendition is on by default and
-// labeled with the real track name/language; everything else is a plain
-// file serve. subName/subLang may be empty (no-subs casts never produce a
-// master.m3u8, so the rewrite path simply never runs for them).
-func StartServer(dir, subName, subLang string) (int, func(), error) {
+// labeled with the real track name/language, and given a variant line
+// (EnsureVariant, advertising bandwidth) while ffmpeg has not yet written
+// one; everything else is a plain file serve. subName/subLang may be empty
+// (no-subs casts never produce a master.m3u8, so the rewrite path simply
+// never runs for them).
+func StartServer(dir, subName, subLang string, bandwidth int) (int, func(), error) {
 	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return 0, nil, err
@@ -35,7 +37,7 @@ func StartServer(dir, subName, subLang string) (int, func(), error) {
 		if r.URL.Path == "/master.m3u8" {
 			if b, rerr := os.ReadFile(filepath.Join(dir, "master.m3u8")); rerr == nil {
 				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
-				io.WriteString(w, RewriteMasterPlaylist(string(b), subName, subLang))
+				io.WriteString(w, EnsureVariant(RewriteMasterPlaylist(string(b), subName, subLang), bandwidth))
 				return
 			}
 		}
