@@ -273,6 +273,19 @@ gh run download <run-id> --name iina-airplay-package --dir /tmp/dryrun
 `https://ozykhan.github.io/iina-airplay/` is GitHub Pages serving the `docs/`
 folder of `master` (`docs/index.html`, plus `docs/.nojekyll` so Jekyll never
 tries to build the markdown under `docs/`, which contains `{{ }}` from Actions
-YAML, this file included). It deploys on every push to `master` and carries no
-version number, so nothing in the release choreography touches it and a fix to
-the page ships like a manifest fix: merge to `master`, wait a minute, reload.
+YAML, this file included). It deploys on every push to `master` and carries
+nothing that changes per release, no version number and no release date, so
+nothing in the release choreography touches it and a fix to the page ships like
+a manifest fix: merge to `master`, wait a minute, reload.
+
+That only holds while the page stays free of per-release values, and it has
+slipped once. The JSON-LD `SoftwareApplication` block in `docs/index.html` used
+to carry `softwareVersion` and `dateModified`; no step in "Cutting a release"
+updates the page, so `v0.3.2` shipped with it still announcing `0.3.1`. Both
+fields were removed rather than wired into the bump: schema.org makes them
+optional and Google's software-app result reads neither, so they bought nothing
+and could only go stale. `datePublished` stays because it is the date of the
+first release and never changes. Do not add a version, a release date or
+anything else derived from `Info.json` to the page; if one is ever worth
+having, it needs a test under `packaging/tests/` that fails when it disagrees
+with `Info.json`, and a line in the release sequence.
