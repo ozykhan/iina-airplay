@@ -12,7 +12,7 @@ ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 SRC_ROOT="${VERIFY_SRC_ROOT:-$ROOT/plugin}"
 
 # The manifest is NOT under plugin/ — it lives at the repository root, because
-# IINA's update check fetches raw.githubusercontent.com/<ghRepo>/master/Info.json.
+# IINA's update check fetches raw.githubusercontent.com/<ghRepo>/<branch>/Info.json.
 # pack.sh copies it from there into the package root, so the staleness check has
 # to compare it against the root, not against SRC_ROOT. Kept a separate knob
 # rather than folded into SRC_ROOT so the tests can point the two independently

@@ -5,12 +5,16 @@
 #
 #   Install by slug:  api.github.com/repos/<ghRepo>/releases/latest, first asset
 #                     ending .iinaplgz.
-#   Update check:     raw.githubusercontent.com/<ghRepo>/master/Info.json — the
-#                     REPOSITORY ROOT of master, never the release.
+#   Update check:     raw.githubusercontent.com/<ghRepo>/<branch>/Info.json — the
+#                     REPOSITORY ROOT of a branch IINA names itself, never the
+#                     release. IINA 1.4.x reads master; 1.5.0 and later read
+#                     main. Both are gated, because both are installed.
 #
 # v0.2.0 is why this exists: it published perfectly, passed every check in the
 # chain, and reached nobody, because the manifest was not at the repo root and
-# IINA 1.4.4 reports that 404 as "No update found." with no error.
+# IINA 1.4.4 reports that 404 as "No update found." with no error. IINA 1.5.0
+# is why it reads two branches: it moved the beacon to main, where this
+# repository had nothing, and a gate that only looked at master stayed green.
 # packaging/check-release.sh gates the tag BEFORE the build; this gates the
 # published result after. See docs/releasing.md.
 set -uo pipefail
@@ -24,8 +28,8 @@ RAW_BASE="${CHECK_PUBLISHED_RAW_BASE:-https://raw.githubusercontent.com}"
 INFO="$ROOT/Info.json"
 
 # --release-only gates the INSTALL half alone. The release sequence publishes
-# the release before the bump lands on master, so that master's beacon never
-# announces a version whose asset is not up yet — which leaves a deliberate
+# the release before the bump lands on master, so that the beacons never
+# announce a version whose asset is not up yet — which leaves a deliberate
 # window in which the update half is SUPPOSED to disagree. This flag is what
 # gates the irreversible step in that window: merging the bump. Run the gate
 # without it afterwards; that is still the check that says the release is done.
@@ -64,28 +68,58 @@ fetch() { curl -fsSL "$1" > "$2" 2>/dev/null; }
 fetch "$API_BASE/repos/$ghrepo/releases/latest" "$TMPD/latest.json" \
   || fail "cannot read releases/latest for $ghrepo — is anything published?"
 
+# IINA names the beacon branch itself, and which name depends on the IINA: 1.4.x
+# reads master, 1.5.0 and later read main. main is a mirror of master, kept by
+# .github/workflows/mirror-main.yml. Each is fetched and judged on its own,
+# because each can be wrong while the other is right.
+#
 # Skipped entirely under --release-only, rather than fetched and ignored: in
-# that window the manifest on master is EXPECTED to disagree, and a fetch whose
-# result is discarded invites someone to later "fix" the discrepancy it prints.
-# The empty path below tells the checker there is nothing to judge.
+# that window the manifests are EXPECTED to disagree with the tag, and a fetch
+# whose result is discarded invites someone to later "fix" the discrepancy it
+# prints. The empty paths below tell the checker there is nothing to judge.
 #
 # A miss here is THE silent one, so it is named for what it breaks rather than
 # reported as a bare HTTP error.
-if [ "$RELEASE_ONLY" = 1 ]; then
-  raw_arg=""
-elif ! fetch "$RAW_BASE/$ghrepo/master/Info.json" "$TMPD/raw.json"; then
-  fail "IINA's update check reads $RAW_BASE/$ghrepo/master/Info.json and it is not there.
-    Existing users will be told \"No update found.\" no matter how correct the
-    release is — IINA folds a failed fetch and \"no newer version\" into one
-    branch. The manifest must be committed at the REPOSITORY ROOT of master."
-else
-  raw_arg="$TMPD/raw.json"
+raw_master=""
+raw_main=""
+if [ "$RELEASE_ONLY" != 1 ]; then
+  raw_master="$TMPD/raw-master.json"
+  raw_main="$TMPD/raw-main.json"
+  fetch "$RAW_BASE/$ghrepo/master/Info.json" "$raw_master" \
+    || fail "IINA 1.4.x's update check reads $RAW_BASE/$ghrepo/master/Info.json and it is not there.
+    Existing users on 1.4.x will be told \"No update found.\" no matter how
+    correct the release is — that IINA folds a failed fetch and \"no newer
+    version\" into one branch. The manifest must be committed at the REPOSITORY
+    ROOT of master."
+  fetch "$RAW_BASE/$ghrepo/main/Info.json" "$raw_main" \
+    || fail "IINA 1.5.0 and later run their update check against $RAW_BASE/$ghrepo/main/Info.json and it is not there.
+    Every 1.5 install of this plugin gets \"Error checking for updates.\" — for
+    ALL of its plugins, because one failed fetch aborts the whole check. main is
+    a mirror of master kept by .github/workflows/mirror-main.yml: confirm its
+    run for the latest push to master succeeded, then give
+    raw.githubusercontent.com a few minutes of cache before re-running this."
 fi
 
-/usr/bin/python3 - "$TAG" "$TMPD/latest.json" "$raw_arg" <<'PY'
+/usr/bin/python3 - "$TAG" "$TMPD/latest.json" "$raw_master" "$raw_main" <<'PY'
 import json, sys
 
-tag, latest_path, raw_path = sys.argv[1], sys.argv[2], sys.argv[3]
+tag, latest_path = sys.argv[1], sys.argv[2]
+# The update beacons: (branch, the IINA that reads it, path to what was fetched).
+# Empty paths are --release-only: the manifests were never fetched, because in
+# that window they are expected to disagree with the tag.
+beacons = [
+    ("master", "IINA 1.4.x", sys.argv[3]),
+    ("main", "IINA 1.5.0 and later", sys.argv[4]),
+]
+release_only = not any(path for _, _, path in beacons)
+# main is written by a workflow, not by hand. When it is wrong and master is
+# right, no manifest needs editing — the mirror needs re-running — and the
+# message has to say so.
+MIRROR_HINT = (
+    " main is a mirror of master kept by .github/workflows/mirror-main.yml: "
+    "confirm its run for the latest push to master succeeded, then give "
+    "raw.githubusercontent.com a few minutes of cache before re-running this."
+)
 expected_version = tag[1:] if tag.startswith("v") else tag
 problems = []
 
@@ -100,9 +134,6 @@ def load(path, what):
 
 
 latest = load(latest_path, "releases/latest")
-# An empty raw_path is --release-only: the manifest on master was never
-# fetched, because in that window it is expected to disagree.
-raw = load(raw_path, "the manifest on master") if raw_path else None
 
 # --- the install mechanism ---------------------------------------------------
 if latest.get("tag_name") != tag:
@@ -129,22 +160,46 @@ if len(plgz) != 1:
     )
 
 # --- the update mechanism ----------------------------------------------------
-raw_version = raw.get("version") if raw is not None else None
-if raw is None:
-    pass
-elif raw_version != expected_version:
-    problems.append(
-        f"the manifest on master says version {raw_version!r}, but this tag is {tag!r} "
-        f"(expected {expected_version!r}). IINA's update check reads master, not the "
-        f"release: if the bump never landed on master, existing users are never offered "
-        f"this release."
-    )
+reported = {}
+found = {}
+for branch, reader, path in [] if release_only else beacons:
+    raw = load(path, f"the manifest on {branch}")
+    found[branch] = []
 
-gh = raw.get("ghVersion") if raw is not None else None
-if raw is not None and (isinstance(gh, bool) or not isinstance(gh, int)):
+    raw_version = raw.get("version")
+    if raw_version != expected_version:
+        found[branch].append(
+            f"the manifest on {branch} says version {raw_version!r}, but this tag is "
+            f"{tag!r} (expected {expected_version!r}). The update check in {reader} "
+            f"reads {branch}, not the release: if the bump never reached {branch}, "
+            f"those installs are never offered this release."
+        )
+
+    gh = raw.get("ghVersion")
+    if isinstance(gh, bool) or not isinstance(gh, int):
+        found[branch].append(
+            f"ghVersion on {branch} must be a JSON integer, not {type(gh).__name__} — "
+            f"IINA casts it as? Int, and a wrong type fails the update check for "
+            f"every install that reads {branch}."
+        )
+    else:
+        reported[branch] = (raw_version, gh)
+
+# Only when main is wrong ON ITS OWN. If master is wrong too, the bump never
+# landed, and pointing at the mirror would send the reader to the wrong place.
+if found.get("main") and not found.get("master"):
+    found["main"] = [problem + MIRROR_HINT for problem in found["main"]]
+for branch_problems in found.values():
+    problems.extend(branch_problems)
+
+# The two can name the same version and still differ in the one number IINA
+# compares — a ghVersion patched on master by a push the mirror missed.
+if len(reported) == 2 and reported["master"][1] != reported["main"][1]:
     problems.append(
-        f"ghVersion on master must be a JSON integer, not {type(gh).__name__} — "
-        f"IINA casts it as? Int, and a wrong type silently disables update checks"
+        f"master and main disagree on ghVersion ({reported['master'][1]} vs "
+        f"{reported['main'][1]}). IINA compares that number and nothing else, so "
+        f"installs reading the lower one are not offered what the other announces."
+        f"{MIRROR_HINT}"
     )
 
 if problems:
@@ -156,16 +211,20 @@ if problems:
 # Two distinct messages, because these are two distinct claims and the weaker
 # one is read mid-sequence. A bare "OK" here could be mistaken for the full
 # gate, which is the one that says the release is actually done.
-if raw is None:
+if release_only:
     print(
         f"check-published: OK (release half only) — {tag} is /releases/latest with "
-        f"one .iinaplgz. master's manifest was NOT checked; run without "
-        f"--release-only after merging the bump."
+        f"one .iinaplgz. The manifests on master and main were NOT checked; run "
+        f"without --release-only after merging the bump."
     )
 else:
+    seen = " and ".join(
+        f"on {branch} ({reader})" for branch, reader, _ in beacons
+    )
+    version, gh = reported["master"]
     print(
         f"check-published: OK — {tag} is /releases/latest with one .iinaplgz, and "
-        f"master's manifest reports version {raw_version} / ghVersion {gh}, so IINA "
-        f"offers the update to existing installs."
+        f"the manifests {seen} both report version {version} / ghVersion {gh}, so "
+        f"IINA offers the update to existing installs."
     )
 PY
