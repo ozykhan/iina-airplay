@@ -2,9 +2,11 @@
 
 A plugin that gets the file IINA is playing onto an Apple TV. Shipping: the
 plugin (`plugin/`), the Go helper (`helper/`) and the packaging chain are all
-built, and `v0.2.0` is published and installs through IINA by repo slug. The
-throwaway prototype under `prototype/` is kept as the record of what de-risked
-the design, not as live code.
+built, and releases are published and install through IINA — from its built-in
+plugin store on IINA 1.5.0 and later, where the plugin is listed under
+Community Plugins (`plugins.json` on `iina/iina`'s `develop`), or by repo slug
+on 1.4. The throwaway prototype under `prototype/` is kept as the record of
+what de-risked the design, not as live code.
 
 ## The shape of the thing
 
@@ -52,26 +54,42 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   ALAC, FLAC. Not MKV, not DTS/DTS-HD, not TrueHD, not PGS subtitles.
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
 - **Install and update are two different mechanisms**, and satisfying one does
-  not satisfy the other. Installing by slug reads
+  not satisfy the other. Installing — by slug, or from the 1.5 store, which
+  resolves to the same call — reads
   `api.github.com/repos/<ghRepo>/releases/latest` and takes the first asset
   ending `.iinaplgz`. The update check reads
-  `raw.githubusercontent.com/<ghRepo>/master/Info.json` — the **repository root
-  of `master`**, never the release — and compares its `ghVersion` against **the
-  installed package's own**; only then does it fetch the asset. So the shipped
-  `.iinaplgz` and `master` must carry the same number, and the bump is merged to
-  `master` **last**, after the release is published — otherwise the beacon
-  advertises a version whose asset is not up yet and the update hands out the
-  previous release. This is why `Info.json` lives at the repo root and
-  `packaging/pack.sh` copies it into the package. IINA 1.4.4 folds a failed
-  fetch and "no newer version" into one branch (`JavascriptPlugin.swift`,
-  `checkForUpdates`), so a 404 there surfaces as **"No update found."** with no
-  error — `v0.2.0` shipped perfectly and still reached nobody. Bumping
-  `ghVersion` is necessary but not sufficient. The beacon is *branch state*, so
-  a manifest fix reaches existing users on a plain push to `master`, with no new
-  tag or rebuild. `plugin/Info.json` is a gitignored `make dev` symlink so IINA
-  can load the plugin directory — never commit it: `raw.githubusercontent.com`
-  serves a symlink's target path as text, not JSON. Full reasoning in
-  `docs/releasing.md`.
+  `raw.githubusercontent.com/<ghRepo>/<branch>/Info.json` — the **repository
+  root of a branch IINA hardcodes**, never the release — and compares its
+  `ghVersion` against **the installed package's own**; only then does it fetch
+  the asset. So the shipped `.iinaplgz` and `master` must carry the same number,
+  and the bump is merged to `master` **last**, after the release is published —
+  otherwise the beacon advertises a version whose asset is not up yet and the
+  update hands out the previous release. This is why `Info.json` lives at the
+  repo root and `packaging/pack.sh` copies it into the package. IINA 1.4.4 folds
+  a failed fetch and "no newer version" into one branch
+  (`JavascriptPlugin.swift`, `checkForUpdates`), so a 404 there surfaces as
+  **"No update found."** with no error — `v0.2.0` shipped perfectly and still
+  reached nobody. Bumping `ghVersion` is necessary but not sufficient. The
+  beacon is *branch state*, so a manifest fix reaches existing users on a plain
+  push to `master`, with no new tag or rebuild.
+- **The beacon branch depends on the IINA: 1.4.x reads `master`, 1.5.0 and
+  later read `main`** (`JavascriptPlugin.swift`, `checkNewVersion`). Both are
+  installed, so `master` is the trunk and **`main` is a mirror of it**, which
+  `.github/workflows/mirror-main.yml` fast-forwards on every push to `master`.
+  Never commit to `main`, never open a PR against it, never rename either
+  branch. 1.5.0 also throws on a failed fetch, and its Settings page checks all
+  plugins in one loop that the first throw aborts — so a missing `main` shows
+  every 1.5 user who has this plugin **"Error checking for updates."** for
+  their *whole* plugin list, which is what happened for a day after 1.5.0
+  shipped. `packaging/check-published.sh` reads both branches for that reason.
+  Do not "fix" this by renaming `master` to `main`: `raw.githubusercontent.com`
+  serves a `master` URL from the default branch when no `master` exists, so it
+  would appear to work, but that fallback is undocumented and one-way (a `main`
+  URL never falls back to `master`).
+- **`plugin/Info.json` is a gitignored `make dev` symlink** so IINA can load
+  the plugin directory — never commit it: `raw.githubusercontent.com` serves a
+  symlink's target path as text, not JSON. Full reasoning for all three of
+  these in `docs/releasing.md`.
 
 ## The design is settled — all prototype tests passed (2026-08-29, user-confirmed)
 

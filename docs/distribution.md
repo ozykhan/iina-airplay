@@ -34,6 +34,14 @@
 > `packaging/check-published.sh` gates both mechanisms after publish. Full
 > account in `docs/releasing.md`.
 
+> **Status 2026-10-04:** IINA 1.5.0 shipped with a built-in plugin store, and
+> this plugin is in it — listed under Community Plugins in `iina/iina`'s
+> `plugins.json`. The same release moved the update beacon from `master` to
+> `main`, where this repository had nothing, and turned the miss into a visible
+> error for every plugin the user has. `main` now mirrors `master`
+> (`.github/workflows/mirror-main.yml`) and `check-published.sh` reads both.
+> Full account in `docs/releasing.md`, "Two branches, because two IINAs".
+
 ## The decision, and the two designs it beat
 
 The plugin needs three things on a stranger's Mac: an ffmpeg-class remuxer, a LAN
@@ -86,12 +94,21 @@ happens, Developer ID signing drops into the CI pipeline without design changes.
 
 ## Install channel
 
-Users type the GitHub repo slug (`ozykhan/iina-airplay`) into IINA → Settings →
-Plugins → Install. IINA queries the repo's **latest GitHub release** for an
-`.iinaplgz` asset and installs it (falling back to `archive/main.zip` of the
-source if none — so every release must carry the asset, or users get an
-uninstallable source tree). For users who cannot reach GitHub: document IINA's
-"install from local package" with the `.iinaplgz` fetched from any mirror.
+On IINA 1.5 and later, users pick the plugin from the built-in store: Settings →
+Plugins → Get Plugins… → AirPlay, under Community Plugins. The store is IINA's
+own `plugins.json`, and its Install button resolves to the same call as the
+older route, which is all IINA 1.4 has: typing the GitHub repo slug
+(`ozykhan/iina-airplay`) into Settings → Plugins → Install.
+
+Either way, IINA queries the repo's **latest GitHub release** for an `.iinaplgz`
+asset and installs it (falling back to `archive/main.zip` of the source if none
+— so every release must carry the asset, or users get an uninstallable source
+tree). That fallback used to 404 here; now that `main` exists it downloads the
+source, and IINA — 1.4.4 and 1.5.0 alike — then refuses to load it, because the
+entry file is under `plugin/` and not at the root. Still a failed install,
+never a binary-less one.
+For users who cannot reach GitHub: document IINA's "install from local package"
+with the `.iinaplgz` fetched from any mirror.
 
 ## Package layout
 

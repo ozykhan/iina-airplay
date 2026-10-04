@@ -130,7 +130,7 @@ expect_fail "ghVersion is a string" "$strver" v0.1.0 "integer"
 
 # --- the move of Info.json from plugin/ to the repository root ---------------
 # Info.json now lives at the repo root, because IINA's update check reads
-# raw.githubusercontent.com/<ghRepo>/master/Info.json. The gate has to keep
+# raw.githubusercontent.com/<ghRepo>/<branch>/Info.json. The gate has to keep
 # working ACROSS that move: v0.1.0 and v0.2.0 are already tagged with the
 # manifest under plugin/, so the previous-tag lookup for the next release
 # resolves to the old path, and every release after that to the new one.

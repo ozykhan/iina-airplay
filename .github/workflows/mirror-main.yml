@@ -1,0 +1,59 @@
+name: mirror-main
+
+# Keeps `main` an exact copy of `master`, because IINA hardcodes the branch it
+# reads the update beacon from and the name depends on the IINA: 1.4.x fetches
+# raw.githubusercontent.com/<ghRepo>/master/Info.json, 1.5.0 and later fetch
+# .../main/Info.json. Both are installed, so both URLs have to answer.
+#
+# This is not tidiness. 1.5.0 also turned a failed fetch into a thrown error,
+# and its Settings page checks every plugin in one loop that the first throw
+# aborts: while `main` did not exist, each 1.5 user who had this plugin was
+# shown "Error checking for updates." for ALL of their plugins. See
+# docs/releasing.md, "Two branches, because two IINAs".
+#
+# `master` stays the default branch and the only one anyone commits to. `main`
+# is output: nothing is ever merged into it, and a PR opened against it is a
+# mistake.
+#
+# The Actions token is enough, which was not a given: it has no `workflows`
+# permission, and GitHub refuses a push that creates or updates a workflow file
+# without one. Fast-forwarding a branch to a commit the repository ALREADY HAS
+# is allowed even when that commit changes a workflow — proven on a scratch
+# branch before this was written, because a mirror that stops the first time a
+# workflow is edited would be worse than no mirror.
+on:
+  push:
+    branches: [master]
+  # For re-running by hand after a failure, and for recreating `main` should it
+  # ever be deleted.
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+# One at a time, and never cancelled mid-push. A run pushes whatever master's
+# tip is when it executes, not the commit that triggered it, so a queued run
+# that starts late is a no-op rather than a rejected push of an older commit.
+concurrency:
+  group: mirror-main
+  cancel-in-progress: false
+
+jobs:
+  mirror:
+    # Linux: this is one `git push`, and ci.yml's macos-15 is 10x the rate.
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v7
+        with:
+          ref: master
+          # The whole history. git only pushes a fast-forward it can prove, and
+          # that needs the commit `main` currently points at to be present
+          # locally; a shallow clone does not have it and the push is rejected.
+          fetch-depth: 0
+
+      # Deliberately not --force. If `main` has diverged, someone committed to
+      # it, and that should fail here, loudly, rather than be erased. Once the
+      # stray commit is understood:
+      #   git push --force origin origin/master:main
+      - name: Fast-forward main to master
+        run: git push origin HEAD:refs/heads/main

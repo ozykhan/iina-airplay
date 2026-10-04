@@ -46,13 +46,13 @@ for var in PLUGIN_INFO PLUGIN_MAIN PLUGIN_SIDEBAR; do
 done
 
 # The manifest specifically must come from the repository root: IINA's update
-# check fetches raw.githubusercontent.com/<ghRepo>/master/Info.json, so a
+# check fetches raw.githubusercontent.com/<ghRepo>/<branch>/Info.json, so a
 # manifest staged from anywhere else would package a version IINA can never see.
 if [ "$PLUGIN_INFO" = "$ROOT/Info.json" ]; then
   echo "ok: the manifest is staged from the repository root, where IINA's update check reads it"
 else
   echo "FAIL: pack.sh stages the manifest from ${PLUGIN_INFO#$ROOT/}, not the repository root."
-  echo "      IINA reads raw.githubusercontent.com/<ghRepo>/master/Info.json; a manifest"
+  echo "      IINA reads raw.githubusercontent.com/<ghRepo>/<branch>/Info.json; a manifest"
   echo "      kept anywhere else leaves the update check reading a 404."
   fails=$((fails + 1))
 fi

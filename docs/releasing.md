@@ -1,9 +1,10 @@
 # Releasing
 
-Users install by typing `ozykhan/iina-airplay` into IINA, which pulls the
-`.iinaplgz` from the repository's **latest GitHub release**. A release without
-that asset is a broken install path, so every release carries it — CI refuses to
-publish one that does not.
+Users install from IINA's plugin store (IINA 1.5 and later, where the plugin is
+listed under Community Plugins) or by typing `ozykhan/iina-airplay` into IINA
+(1.4). Both pull the `.iinaplgz` from the repository's **latest GitHub
+release**. A release without that asset is a broken install path, so every
+release carries it — CI refuses to publish one that does not.
 
 ## Cutting a release
 
@@ -86,6 +87,14 @@ sequence exists to prevent.
    install, and it is the only irreversible step in the sequence — which is why
    step 8 gates it with a command rather than a glance at the release page.
 
+   The merge is a push to `master`, which starts `mirror-main`: the workflow
+   that carries the bump on to `main`, the branch IINA 1.5 reads. It takes
+   seconds; let it finish before step 10.
+
+   ```sh
+   gh run list --workflow mirror-main.yml --limit 1   # expect: completed, success
+   ```
+
 10. **Gate the published result.** Both mechanisms, one command:
 
     ```sh
@@ -94,15 +103,22 @@ sequence exists to prevent.
 
     `check-release.sh` gates the tag before the build; this gates what actually
     shipped. It asserts `/releases/latest` names this tag with exactly one
-    `.iinaplgz`, **and** that `master`'s manifest is readable at the repo root
-    with a matching version and an Int `ghVersion` — the half that nothing
-    checked before `v0.2.0` shipped to nobody. See "Two mechanisms" below.
+    `.iinaplgz`, **and** that the manifest is readable at the repo root of
+    **both** beacon branches — `master` for IINA 1.4, `main` for IINA 1.5 —
+    with a matching version and the same Int `ghVersion`. That is the half
+    nothing checked before `v0.2.0` shipped to nobody, and the branch nothing
+    checked when IINA 1.5.0 moved the beacon. See "Two mechanisms" below.
+
+    If it fails on `main` alone, the mirror has not caught up: confirm the
+    `mirror-main` run from step 9 succeeded, give `raw.githubusercontent.com`
+    its five minutes of cache, and run the gate again.
 
     **A release is not done until this passes.** Not when CI is green, not when
     the release page looks right.
 
-11. **Install it the way a stranger would.** IINA → Settings → Plugins →
-    Install → `ozykhan/iina-airplay`. Not the local-package path — the point is
+11. **Install it the way a stranger would.** On IINA 1.5: Settings → Plugins →
+    Get Plugins… → AirPlay → Install. On 1.4: Settings → Plugins → Install →
+    `ozykhan/iina-airplay`. Not the local-package path — the point is
     to exercise the download-from-release path, which is the one thing local
     packaging can never test. Cast one real file, then confirm nothing picked up
     quarantine:
@@ -134,13 +150,15 @@ satisfy the other. Both must be right or the release reaches nobody.
 
 | | What IINA fetches | Satisfied by |
 | --- | --- | --- |
-| **Install** by slug | `api.github.com/repos/<ghRepo>/releases/latest`, first asset ending `.iinaplgz` | the published release + its asset |
-| **Update check** | `raw.githubusercontent.com/<ghRepo>/master/Info.json` | `Info.json` **committed at the repo root of `master`** |
+| **Install**, from the store or by slug | `api.github.com/repos/<ghRepo>/releases/latest`, first asset ending `.iinaplgz` | the published release + its asset |
+| **Update check**, IINA 1.4.x | `raw.githubusercontent.com/<ghRepo>/master/Info.json` | `Info.json` **committed at the repo root of `master`** |
+| **Update check**, IINA 1.5.0 and later | `raw.githubusercontent.com/<ghRepo>/main/Info.json` | the same file on `main`, which mirrors `master` |
 | **Update download** | back to `releases/latest` | the same asset |
 
 The update check never looks at releases. It reads `ghVersion` out of the
-manifest sitting at the **root of the `master` branch**, and only if that number
-is higher does it then go fetch the `.iinaplgz`.
+manifest sitting at the **root of a branch IINA names itself** — `master` or
+`main`, depending on the IINA — and only if that number is higher does it then
+go fetch the `.iinaplgz`.
 
 This is why `Info.json` lives at the repository root rather than under
 `plugin/`, and why `packaging/pack.sh` copies it from there into the package.
@@ -155,11 +173,54 @@ Two consequences worth keeping in mind:
 
 - **The update beacon is branch state, not release state.** A manifest fix
   reaches existing users as soon as it lands on `master` — no new tag, no
-  rebuild. `master` is protected, so "lands on `master`" means a one-commit PR
-  that passes CI, not a direct push.
+  rebuild — and reaches 1.5 installs seconds later, when the mirror carries it
+  to `main`. `master` is protected, so "lands on `master`" means a one-commit
+  PR that passes CI, not a direct push.
 - **`master` must carry the bumped `ghVersion`.** Tagging a release whose
   manifest never lands on `master` leaves the update check reading the old
   number, however correct the release page looks.
+
+### Two branches, because two IINAs
+
+The branch name in that URL is hardcoded in IINA, and IINA 1.5.0 changed it:
+1.4.x reads `master`, 1.5.0 and later read `main` (`JavascriptPlugin.swift`,
+`checkNewVersion`; the 1.5.0 release notes say "Use main branch to check for
+updates"). Both generations are installed, so both URLs have to answer, with
+the same manifest.
+
+So `master` is the trunk, exactly as before, and **`main` is a mirror of it**.
+`.github/workflows/mirror-main.yml` fast-forwards `main` on every push to
+`master`. Nothing is ever committed to `main` directly, and a PR opened against
+it is a mistake.
+
+1.5.0 also changed what a missing manifest looks like, and it is no longer
+quiet. A failed fetch is thrown instead of folded into "no update", and the
+Settings page checks every installed plugin in one loop that the first throw
+aborts. This repository had no `main` when 1.5.0 shipped on 2026-10-03, and
+until one was pushed the next day every 1.5 user who had the plugin was shown
+**"Error checking for updates."** for *all* of their plugins — plus a download
+error when updating this one on its own.
+
+Renaming `master` to `main` is not the fix, even though GitHub would make it
+nearly work. `raw.githubusercontent.com` answers a `master` URL from the default
+branch when a repository has no `master` at all, so `main`-only plugins satisfy
+both IINAs by accident — which is why the move went unnoticed upstream: on
+2026-10-04, this plugin and one other were the only GitHub-hosted entries in
+IINA's list answering on `master` but not on `main`. But that fallback is
+undocumented and runs one way only: a `main` URL never falls back to `master`.
+A rename would stake every 1.4 install on it. Two real branches depend on
+nothing.
+
+What can go wrong, and what it looks like:
+
+- **The mirror run fails.** `main` keeps the previous manifest, so 1.5 installs
+  are not offered the release. `check-published.sh` reads both branches and
+  fails on the stale one. Re-run the mirror: `gh workflow run mirror-main.yml`.
+- **`main` has diverged** — someone committed to it. The workflow refuses to
+  force-push and fails. Once the stray commit is understood:
+  `git push --force origin origin/master:main`.
+- **`main` is deleted.** 1.5 installs are back to "Error checking for updates."
+  `gh workflow run mirror-main.yml` recreates it.
 
 ### The skew has a direction
 
@@ -196,12 +257,14 @@ direction and a dangerous one:
 
 Publishing before merging keeps the skew in the bottom row for the few minutes
 it exists, and in no row at all the rest of the time. Cutting `v0.3.0` the other
-way round left about ten minutes of the top row.
+way round left about ten minutes of the top row. `main` trails `master` by the
+seconds the mirror takes, which only keeps 1.5 installs in the bottom row a
+little longer — the safe direction.
 
-> On IINA's `develop` branch this is `checkNewVersion()`, which throws on a
-> failed fetch instead of folding it into `nil` — so a future IINA will report a
-> missing manifest as an error rather than as "No update found." The comparison
-> itself is unchanged, and 1.4.4 is what users are running.
+> IINA 1.5.0 replaced this with `checkNewVersion()`. The comparison itself is
+> unchanged; what moved is the branch it reads (`main`, not `master`) and the
+> failure mode (a failed fetch is thrown rather than folded into `nil`). See
+> "Two branches, because two IINAs" above.
 
 `plugin/Info.json` is a gitignored symlink created by `make dev`, because a
 plugin directory must carry its own manifest for IINA to load it. Never commit

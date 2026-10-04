@@ -14,7 +14,7 @@ set -uo pipefail
 # throwaway repository instead of this one.
 ROOT="${CHECK_RELEASE_ROOT:-$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)}"
 # The manifest lives at the REPOSITORY root, not under plugin/: IINA's update
-# check fetches raw.githubusercontent.com/<ghRepo>/master/Info.json, and while
+# check fetches raw.githubusercontent.com/<ghRepo>/<branch>/Info.json, and while
 # it sat under plugin/ that URL 404'd and updates were never offered.
 INFO="$ROOT/Info.json"
 

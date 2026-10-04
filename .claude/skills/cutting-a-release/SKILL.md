@@ -21,9 +21,10 @@ tick, and the release reaches nobody. `v0.2.0` shipped exactly that way.
 
 ## Sequence
 
-**The bump lands on `master` LAST.** `master` is the update beacon, so merging
-it before the asset is published tells every install an update exists and then
-hands it the previous release. Publish first; merge last.
+**The bump lands on `master` LAST.** `master` is the update beacon — IINA 1.4
+reads it directly, and `mirror-main` copies every push on to `main`, which IINA
+1.5 reads — so merging it before the asset is published tells every install an
+update exists and then hands it the previous release. Publish first; merge last.
 
 1. Bump `version` **and** `ghVersion` in `Info.json` — the one at the repository
    root — on a `release/v<version>` branch. Open the PR. **Do not merge it.**
@@ -38,7 +39,11 @@ hands it the previous release. Publish first; merge last.
    the latest release** checked.
 6. `./packaging/check-published.sh --release-only v<version>`.
 7. **Merge the PR.** The only irreversible step, which is why step 6 gates it.
-8. `./packaging/check-published.sh v<version>`.
+   The merge starts `mirror-main`; let it finish
+   (`gh run list --workflow mirror-main.yml --limit 1`).
+8. `./packaging/check-published.sh v<version>`. It reads the manifest on
+   `master` **and** on `main`. Failing on `main` alone means the mirror has not
+   caught up — check its run, wait out the five-minute raw cache, run it again.
 
 ## Red flags — you are about to ship to nobody
 
@@ -53,14 +58,25 @@ hands it the previous release. Publish first; merge last.
 - `version` bumped but not `ghVersion`. Existing installs are never offered it.
 - The bump never landed on `master`. The update check reads the **branch**, not
   the release, so a perfect release page changes nothing.
+- Committing to `main`, or merging a PR into it. `main` is a mirror of `master`;
+  a commit there makes it diverge and the mirror stops, taking IINA 1.5's
+  beacon with it.
 - Committing `plugin/Info.json`. It is a gitignored `make dev` symlink, and
   `raw.githubusercontent.com` serves a symlink's target path as text, not JSON.
 
-## When IINA still says "No update found."
+## When IINA still says "No update found." — or "Error checking for updates."
 
 That is not a release problem and re-cutting the release will not fix it. Check
-the update beacon directly — this is the URL IINA actually fetches:
+the update beacon directly — these are the URLs IINA actually fetches, `master`
+on 1.4 and `main` on 1.5:
 
 ```sh
 curl -fsS https://raw.githubusercontent.com/<ghRepo>/master/Info.json
+curl -fsS https://raw.githubusercontent.com/<ghRepo>/main/Info.json
 ```
+
+"No update found." is 1.4 failing to read `master`, or either IINA reading a
+`ghVersion` that is not higher than the installed one. "Error checking for
+updates." is 1.5 failing to read `main` — and it shows for every plugin the user
+has, so reports may not mention this plugin at all. If `main` is missing or
+behind: `gh workflow run mirror-main.yml`.

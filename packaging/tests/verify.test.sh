@@ -194,7 +194,7 @@ fi
 
 # --- staleness: the manifest lives at the REPO root, the payload under plugin/
 # Info.json moved to the repository root because IINA's update check fetches
-# raw.githubusercontent.com/<ghRepo>/master/Info.json. That split the one
+# raw.githubusercontent.com/<ghRepo>/<branch>/Info.json. That split the one
 # source tree verify.sh used to compare against into two, and the dangerous
 # outcome is not a loud error but a SILENT one: with the manifest no longer
 # under $VERIFY_SRC_ROOT, the per-file "not found — skipping" branch (which
