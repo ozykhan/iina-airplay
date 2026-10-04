@@ -8,8 +8,12 @@ re-encode — the plugin hands the file to the TV, and IINA stays the remote.
 <sub>Demo footage: _Sintel_ © [Blender Foundation](https://durian.blender.org), licensed [CC BY 3.0](https://creativecommons.org/licenses/by/3.0/).</sub>
 
 ```
-IINA → Settings → Plugins → Install → ozykhan/iina-airplay
+IINA → Settings → Plugins → Get Plugins… → AirPlay → Install
 ```
+
+In IINA's own plugin store since IINA 1.5, under
+[Community Plugins](https://github.com/iina/iina#community-plugins). On IINA 1.4,
+install by repository instead: `ozykhan/iina-airplay`.
 
 macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downloads at runtime
 
@@ -48,15 +52,24 @@ matrix.
 
 ## Install
 
-Install **through IINA**, not by downloading the package in a browser:
+Install **through IINA**, not by downloading the package in a browser.
+
+**IINA 1.5 and later** list the plugin in the built-in store:
+
+IINA → Settings → Plugins → **Get Plugins…** → **AirPlay**, under Community
+Plugins → **Install**
+
+**IINA 1.4** has no store, so give it the repository:
 
 IINA → Settings → Plugins → Install → enter `ozykhan/iina-airplay`
 
-IINA fetches the `.iinaplgz` from the latest GitHub release and extracts it
-without applying `com.apple.quarantine`, so the bundled binaries run under
-Gatekeeper with only their ad-hoc signatures. Downloading the package in a
-browser and opening it by hand quarantines everything inside it, and the plugin
-will tell you to reinstall through IINA when that happens.
+The same slug also works in the field at the top of the 1.5 store.
+
+Either way, IINA fetches the `.iinaplgz` from the latest GitHub release and
+extracts it without applying `com.apple.quarantine`, so the bundled binaries
+run under Gatekeeper with only their ad-hoc signatures. Downloading the package
+in a browser and opening it by hand quarantines everything inside it, and the
+plugin will tell you to reinstall through IINA when that happens.
 
 On macOS 15+, grant IINA the **Local Network** permission the first time it
 casts, or the Apple TV cannot reach the stream.
@@ -84,8 +97,9 @@ at runtime.
 make pack       # builds ffmpeg (slow, once), the helper, packs and verifies
 ```
 
-The result is `build/iina-airplay.iinaplgz`. Install it via IINA → Settings →
-Plugins → the `+` menu → Install from local package.
+The result is `build/iina-airplay.iinaplgz`. Install it from IINA → Settings →
+Plugins: **Install Local Package…** on IINA 1.5, or the `+` menu → Install from
+local package on 1.4.
 
 Building ffmpeg from source needs `nasm` (see Dev quickstart below) — the
 x86_64 slice assembles hand-optimized x86 assembly with it; arm64 never
@@ -135,9 +149,11 @@ once. New here? Look for
 [`good first issue`](https://github.com/ozykhan/iina-airplay/labels/good%20first%20issue).
 
 Trunk-based: branch off `master`, open a PR back into it, squash-merge; CI's
-`test` gate must pass. `master` is not a stylistic choice — IINA's update check
-reads `Info.json` from that branch by name, so renaming it would cut existing
-installs off from updates.
+`test` gate must pass. The branch names are not a stylistic choice — IINA's
+update check reads `Info.json` from a branch it names itself: `master` on
+IINA 1.4, `main` on 1.5. So `master` is the trunk and `main` is a mirror of it
+that a workflow keeps in step. Never commit to `main`, and never rename either:
+that would cut one generation of IINA off from updates.
 
 ## Docs
 

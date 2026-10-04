@@ -147,9 +147,9 @@
   "applicationCategory": "MultimediaApplication",
   "operatingSystem": "macOS 12 or later",
   "softwareRequirements": "IINA",
-  "softwareVersion": "0.3.1",
+  "softwareVersion": "0.3.2",
   "datePublished": "2026-08-30",
-  "dateModified": "2026-09-07",
+  "dateModified": "2026-09-24",
   "license": "https://github.com/ozykhan/iina-airplay/blob/master/LICENSE",
   "isAccessibleForFree": true,
   "offers": { "@type": "Offer", "price": "0", "priceCurrency": "USD" },
@@ -168,7 +168,7 @@
       <p class="lead">No screen mirroring, no re-encode. The plugin hands the file to the TV, and IINA stays the remote.</p>
       <div class="cta">
         <a class="button" href="#install">Install through IINA</a>
-        <span class="slug">Settings → Plugins → Install → <code>ozykhan/iina-airplay</code></span>
+        <span class="slug">Settings → Plugins → Get Plugins… → AirPlay</span>
       </div>
       <p class="facts">macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downloads at runtime</p>
     </div>
@@ -220,9 +220,11 @@
 
   <section id="install" aria-labelledby="install-title">
     <h2 id="install-title">Install</h2>
-    <p>Install <strong>through IINA</strong>, not by downloading the package in a browser:</p>
+    <p>Install <strong>through IINA</strong>, not by downloading the package in a browser. IINA 1.5 and later list the plugin in the built-in store, under Community Plugins:</p>
+    <code class="path">IINA → Settings → Plugins → Get Plugins… → AirPlay → Install</code>
+    <p>IINA 1.4 has no store, so give it the repository instead. The same slug also works in the field at the top of the 1.5 store.</p>
     <code class="path">IINA → Settings → Plugins → Install → ozykhan/iina-airplay</code>
-    <p>IINA fetches the package from the latest GitHub release and extracts it without applying the quarantine flag, so the bundled binaries run under Gatekeeper with their ad-hoc signatures. A package downloaded in a browser and opened by hand is quarantined all the way down, and the plugin will ask you to reinstall through IINA if that happens.</p>
+    <p>Either way, IINA fetches the package from the latest GitHub release and extracts it without applying the quarantine flag, so the bundled binaries run under Gatekeeper with their ad-hoc signatures. A package downloaded in a browser and opened by hand is quarantined all the way down, and the plugin will ask you to reinstall through IINA if that happens.</p>
     <p>On macOS 15 and later, grant IINA the <strong>Local Network</strong> permission the first time it casts, or the Apple TV cannot reach the stream.</p>
     <p>Everything the plugin needs ships inside the package. There are no prerequisites and nothing is downloaded at runtime.</p>
     <p>To cast, play a file and pick <strong>Plugins → AirPlay → Cast to TV</strong> from the menu bar, or open the sidebar's <strong>Plugins</strong> pane, choose the <strong>AirPlay</strong> tab and press <strong>Start casting</strong>. Once the file is packaged, <strong>Send to TV</strong> opens the AirPlay picker. The plugin's page under Settings → Plugins only enables it and shows its log; the controls live in the sidebar.</p>

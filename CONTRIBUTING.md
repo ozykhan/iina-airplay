@@ -106,18 +106,29 @@ These are established facts, not guesses. Fuller detail in
 - **Prefer remuxing over re-encoding, always.** A remux of an HEVC file takes
   seconds; a re-encode of a UHD remux is not something anyone will wait for.
 
-### `master` is load-bearing — do not rename it
+### `master` and `main` are both load-bearing — rename neither, commit only to `master`
 
 IINA's update check fetches
-`raw.githubusercontent.com/<repo>/master/Info.json` — the repository root of the
-**`master` branch**, hardcoded, never the release. Renaming the default branch
-to `main` would silently cut every installed copy off from updates, and IINA
-reports that failure as a bland "No update found." Details in
+`raw.githubusercontent.com/<repo>/<branch>/Info.json` — the repository root of a
+branch whose name is hardcoded in IINA, never the release. IINA 1.4 reads
+**`master`**; IINA 1.5 reads **`main`**. Both are in use, so both must exist and
+carry the same manifest.
+
+`master` is the trunk. `main` is a mirror of it:
+`.github/workflows/mirror-main.yml` fast-forwards it on every push to `master`.
+Never push to `main` or open a PR against it — a commit there makes the mirror
+diverge, and its next run fails rather than overwrite it.
+
+Renaming or deleting either branch cuts one generation of IINA off from updates.
+1.4 reports that as a bland "No update found."; 1.5 reports "Error checking for
+updates." for every plugin the user has installed, not just this one. Details in
 [`docs/releasing.md`](docs/releasing.md).
 
 ## Branch and PR workflow
 
-Trunk-based. `master` is the single long-lived branch and stays green.
+Trunk-based. `master` is the single long-lived branch you work against, and it
+stays green. (`main` exists too, but only as the machine-kept mirror described
+above.)
 
 - Branch off `master`, named `<your-gh-name>/<short-description>`.
 - Conventional-commit messages (`feat:`, `fix:`, `test:`, `docs:`, `chore:`).
