@@ -148,15 +148,25 @@ func validateIPOverride(override string, ifaces []interfaceInfo) (string, error)
 }
 
 func LanIP(override string) (string, error) {
-	ifaces, err := interfaces()
-	if err != nil {
-		return "", err
-	}
+	return lanIP(override, interfaces, defaultRouteIP)
+}
+
+// lanIP needs the interface list only for the override check, the VPN check
+// and the fallback walk. A failed listing costs exactly those, so it never
+// stops a usable default-route address being returned (issue #34).
+func lanIP(override string, list func() ([]interfaceInfo, error), route func() net.IP) (string, error) {
+	ifaces, err := list()
 	if override != "" {
+		if err != nil {
+			return "", fmt.Errorf("cannot check LAN IPv4 override %q: listing network interfaces failed: %w", override, err)
+		}
 		return validateIPOverride(override, ifaces)
 	}
-	if ip := chooseLanIP(defaultRouteIP(), ifaces); ip != "" {
+	if ip := chooseLanIP(route(), ifaces); ip != "" { // ifaces is nil on error
 		return ip, nil
+	}
+	if err != nil {
+		return "", fmt.Errorf("no LAN IPv4 address found: listing network interfaces failed: %w", err)
 	}
 	return "", errors.New("no LAN IPv4 address found; the TV pulls the stream itself, so a routable address is required")
 }
