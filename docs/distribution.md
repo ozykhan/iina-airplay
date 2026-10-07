@@ -152,6 +152,23 @@ cross-compilation plus `lipo` is a two-liner in CI, the artifact is a single
 static binary, and `git clone && go build` works for contributors with no media
 toolchain.
 
+### LAN address selection
+
+The TV pulls the stream, so the `ready` URL needs the Mac's reachable LAN IPv4.
+Normally the helper advertises the default-route address. If it belongs to
+`utun*`, it prefers the first private IPv4 on an up, non-loopback `en*`
+interface. With multiple eligible interfaces, interface order decides; with
+none, the VPN address remains the fallback. Without a usable default-route
+address, the first up, non-loopback interface with a usable IPv4 wins.
+
+For a manual helper run, append `-ip <lan-ip>` to the normal `serve`
+arguments, replacing `<lan-ip>` with the Mac's address on the TV's LAN.
+The override rejects malformed, IPv6, loopback, link-local and unassigned
+addresses, and addresses on down interfaces. It checks local assignment and
+interface state, not reachability — use an interface the TV can reach.
+The server still listens on `0.0.0.0`;
+the flag only changes the advertised host. The plugin has no UI setting for it.
+
 ## The ffmpeg build
 
 Pinned release, custom LGPL-only configure: no GPL components (no libx264 — any

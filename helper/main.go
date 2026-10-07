@@ -44,10 +44,12 @@ func runServe(argv []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	var c JobConfig
 	var parent int
+	var ipOverride string
 	fs.StringVar(&c.Source, "source", "", "media file")
 	fs.StringVar(&c.OutDir, "out", "", "HLS output dir")
 	fs.StringVar(&c.FFmpeg, "ffmpeg", "", "ffmpeg binary")
 	fs.IntVar(&parent, "parent", 0, "IINA pid to watch")
+	fs.StringVar(&ipOverride, "ip", "", "LAN IPv4 address to advertise (auto-detected by default)")
 	fs.Float64Var(&c.Duration, "duration", 0, "source duration seconds")
 	fs.StringVar(&c.VCodec, "vcodec", "", "source video codec (mpv name)")
 	fs.StringVar(&c.ACodec, "acodec", "", "source audio codec (mpv name)")
@@ -117,7 +119,7 @@ func runServe(argv []string) {
 	}
 	defer shutdown()
 
-	ip, err := LanIP()
+	ip, err := LanIP(ipOverride)
 	if err != nil {
 		fail(err.Error())
 	}

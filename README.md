@@ -128,6 +128,9 @@ pick the subsystem ending in `- AirPlay`.
 On macOS 15+, grant IINA the **Local Network** permission the first time it
 tries to serve, or the Apple TV can't reach the stream.
 
+For VPNs, multiple network interfaces and the helper's manual `-ip` override,
+see [LAN address selection](docs/distribution.md#lan-address-selection).
+
 ## Tests
 
 ```sh

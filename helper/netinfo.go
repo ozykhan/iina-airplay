@@ -2,8 +2,16 @@ package main
 
 import (
 	"errors"
+	"fmt"
 	"net"
+	"strings"
 )
+
+type interfaceInfo struct {
+	name  string
+	flags net.Flags
+	addrs []net.Addr
+}
 
 func pickIPv4(addrs []net.Addr) string {
 	for _, a := range addrs {
@@ -41,43 +49,113 @@ func defaultRouteIP() net.IP {
 	return addr.IP
 }
 
-// chooseLanIP prefers the default-route address and falls back to walk. The
-// route is what an Apple TV on the same LAN can actually reach; the walk is
-// interface-index order, which lets a VPN tunnel, Docker bridge or second
-// NIC win purely by sorting first (issue #13).
-func chooseLanIP(route net.IP, walk func() string) string {
-	if route != nil {
-		if ip := pickIPv4([]net.Addr{&net.IPAddr{IP: route}}); ip != "" {
-			return ip
-		}
-	}
-	return walk()
+func usableIPv4(ip net.IP) string {
+	return pickIPv4([]net.Addr{&net.IPAddr{IP: ip}})
 }
 
-// walkInterfaces returns the first up, non-loopback interface's usable IPv4,
-// in interface-index order — the pre-#13 behaviour, kept as the fallback.
-func walkInterfaces() string {
-	ifaces, err := net.Interfaces()
-	if err != nil {
-		return ""
+func interfaceForIP(ip net.IP, ifaces []interfaceInfo) *interfaceInfo {
+	for i := range ifaces {
+		iface := &ifaces[i]
+		for _, addr := range iface.addrs {
+			var candidate net.IP
+			switch v := addr.(type) {
+			case *net.IPNet:
+				candidate = v.IP
+			case *net.IPAddr:
+				candidate = v.IP
+			}
+			if candidate != nil && candidate.Equal(ip) {
+				return iface
+			}
+		}
 	}
+	return nil
+}
+
+func physicalPrivateIPv4(ifaces []interfaceInfo) string {
 	for _, iface := range ifaces {
-		if iface.Flags&net.FlagUp == 0 || iface.Flags&net.FlagLoopback != 0 {
+		if iface.flags&net.FlagUp == 0 || iface.flags&net.FlagLoopback != 0 || !strings.HasPrefix(iface.name, "en") {
 			continue
 		}
-		addrs, err := iface.Addrs()
-		if err != nil {
+		for _, addr := range iface.addrs {
+			if ip := net.ParseIP(pickIPv4([]net.Addr{addr})); ip != nil && ip.IsPrivate() {
+				return ip.String()
+			}
+		}
+	}
+	return ""
+}
+
+func walkInterfaces(ifaces []interfaceInfo) string {
+	for _, iface := range ifaces {
+		if iface.flags&net.FlagUp == 0 || iface.flags&net.FlagLoopback != 0 {
 			continue
 		}
-		if ip := pickIPv4(addrs); ip != "" {
+		if ip := pickIPv4(iface.addrs); ip != "" {
 			return ip
 		}
 	}
 	return ""
 }
 
-func LanIP() (string, error) {
-	if ip := chooseLanIP(defaultRouteIP(), walkInterfaces); ip != "" {
+// chooseLanIP normally prefers the default-route address (issue #13). A
+// full-tunnel VPN is the exception: its default route belongs to utun*, which
+// the Apple TV cannot reach from the physical LAN. In that case prefer a
+// private address on an active macOS hardware interface.
+func chooseLanIP(route net.IP, ifaces []interfaceInfo) string {
+	if route != nil {
+		if ip := usableIPv4(route); ip != "" {
+			if iface := interfaceForIP(route, ifaces); iface != nil && strings.HasPrefix(iface.name, "utun") {
+				if physical := physicalPrivateIPv4(ifaces); physical != "" {
+					return physical
+				}
+			}
+			return ip
+		}
+	}
+	return walkInterfaces(ifaces)
+}
+
+func interfaces() ([]interfaceInfo, error) {
+	ifaces, err := net.Interfaces()
+	if err != nil {
+		return nil, err
+	}
+	infos := make([]interfaceInfo, 0, len(ifaces))
+	for _, iface := range ifaces {
+		addrs, err := iface.Addrs()
+		if err != nil {
+			continue
+		}
+		infos = append(infos, interfaceInfo{name: iface.Name, flags: iface.Flags, addrs: addrs})
+	}
+	return infos, nil
+}
+
+func validateIPOverride(override string, ifaces []interfaceInfo) (string, error) {
+	ip := net.ParseIP(override)
+	if usableIPv4(ip) == "" {
+		return "", fmt.Errorf("invalid LAN IPv4 override %q", override)
+	}
+	iface := interfaceForIP(ip, ifaces)
+	if iface == nil {
+		return "", fmt.Errorf("LAN IPv4 override %q is not assigned to this Mac", override)
+	}
+	if iface.flags&net.FlagUp == 0 {
+		return "", fmt.Errorf("LAN IPv4 override %q cannot be used: interface %s is down", override, iface.name)
+	}
+	return ip.String(), nil
+}
+
+func LanIP(override string) (string, error) {
+	ifaces, err := interfaces()
+	if err != nil {
+		return "", err
+	}
+	if override != "" {
+		return validateIPOverride(override, ifaces)
+	}
+	if ip := chooseLanIP(defaultRouteIP(), ifaces); ip != "" {
 		return ip, nil
 	}
 	return "", errors.New("no LAN IPv4 address found; the TV pulls the stream itself, so a routable address is required")
