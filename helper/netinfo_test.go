@@ -1,6 +1,7 @@
 package main
 
 import (
+	"errors"
 	"net"
 	"strings"
 	"testing"
@@ -61,6 +62,25 @@ func TestChooseLanIP(t *testing.T) {
 			"10.9.0.2",
 		},
 		{
+			"utun route ignores down physical interface",
+			net.ParseIP("10.9.0.2"),
+			[]interfaceInfo{
+				testInterface(t, "utun0", "10.9.0.2/32"),
+				{name: "en0", flags: 0, addrs: []net.Addr{mustCIDR(t, "192.168.50.10/24")}},
+			},
+			"10.9.0.2",
+		},
+		{
+			"utun route ignores loopback physical interface",
+			net.ParseIP("10.9.0.2"),
+			[]interfaceInfo{
+				testInterface(t, "utun0", "10.9.0.2/32"),
+				{name: "en0", flags: net.FlagUp | net.FlagLoopback, addrs: []net.Addr{mustCIDR(t, "192.168.50.10/24")}},
+			},
+			"10.9.0.2",
+		},
+		{"no interfaces keeps the default route", net.ParseIP("192.168.1.18"), nil, "192.168.1.18"},
+		{
 			"non-utun private route stays preferred",
 			net.ParseIP("10.8.0.2"),
 			[]interfaceInfo{testInterface(t, "bridge100", "10.8.0.2/24"), testInterface(t, "en0", "192.168.1.18/24")},
@@ -103,4 +123,38 @@ func TestValidateIPOverrideRejectsDownInterface(t *testing.T) {
 	if got != "" {
 		t.Errorf("rejected override returned IP %q", got)
 	}
+}
+
+// A failed interface listing must only cost what needs the list: the VPN
+// check and the fallback walk. Before #32 the default-route address was
+// returned without listing anything, so the cast still started (issue #34).
+func TestLanIPListingFailure(t *testing.T) {
+	listErr := errors.New("route ip+net: sysctl failed")
+	failedList := func() ([]interfaceInfo, error) { return nil, listErr }
+	routeTo := func(ip string) func() net.IP { return func() net.IP { return net.ParseIP(ip) } }
+
+	t.Run("default-route address still wins", func(t *testing.T) {
+		got, err := lanIP("", failedList, routeTo("192.168.1.18"))
+		if err != nil || got != "192.168.1.18" {
+			t.Fatalf("got %q, err %v; want the default-route address", got, err)
+		}
+	})
+
+	// With no route either, the walk could not run, so "no address found"
+	// would be a guess. The listing error is the real cause.
+	t.Run("no route reports the listing failure", func(t *testing.T) {
+		got, err := lanIP("", failedList, routeTo(""))
+		if !errors.Is(err, listErr) {
+			t.Fatalf("got %q, err %v; want the listing error", got, err)
+		}
+	})
+
+	// The override is checked against the list, so without it the only
+	// honest answer is the listing error, not "not assigned to this Mac".
+	t.Run("override reports the listing failure", func(t *testing.T) {
+		got, err := lanIP("192.168.1.18", failedList, routeTo("192.168.1.18"))
+		if !errors.Is(err, listErr) || strings.Contains(err.Error(), "not assigned") {
+			t.Fatalf("got %q, err %v; want the listing error", got, err)
+		}
+	})
 }
