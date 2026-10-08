@@ -114,8 +114,8 @@ with the `.iinaplgz` fetched from any mirror.
 
 ```
 iina-airplay.iinaplgz            (24.7 MB measured: 24,674,608 bytes, zipped)
-├── Info.json                    sidebarTab, permissions, ghRepo/ghVersion (updates)
-├── main.js / sidebar.html / …   the plugin
+├── Info.json                    sidebarTab, preferencesPage, ghRepo/ghVersion (updates)
+├── main.js / sidebar.html / preferences.html   the plugin
 └── bin/
     ├── airplay-helper           Go, universal, ad-hoc signed (12.2 MB)
     ├── ffmpeg                   static, universal, LGPL configure (43.3 MB)

@@ -63,3 +63,14 @@ test("preferenceDefaults.lanIP defaults to empty, meaning automatic", () => {
   assert.equal(typeof info.preferenceDefaults, "object");
   assert.equal(info.preferenceDefaults.lanIP, "");
 });
+
+// The page writes whatever key its input carries; main.js reads
+// preferenceDefaults' key. If the two ever drift apart the setting silently
+// does nothing — the page stores one key and the plugin reads the default.
+test("preferences.html binds the same key that preferenceDefaults declares", () => {
+  const page = readFileSync(new URL("../" + info.preferencesPage, import.meta.url), "utf8");
+  for (const key of Object.keys(info.preferenceDefaults)) {
+    assert.ok(page.includes(`data-pref-key="${key}"`),
+      `plugin/${info.preferencesPage} has no input bound to preference key "${key}"`);
+  }
+});
