@@ -1,0 +1,37 @@
+<!doctype html>
+<!--
+  Shown under Settings → Plugins → AirPlay → Preferences. IINA injects the
+  binding: every input[data-pref-key] is filled from the stored value (or
+  Info.json's preferenceDefaults) and written back on every change event. It
+  also injects the stylesheet that defines .pref-section and .pref-help and
+  handles dark mode, so this page carries no script and almost no CSS of its
+  own. The value is read by main.js at cast start (lanIPOverride) and passed
+  to the helper as `serve -ip <addr>`; the helper rejects anything that is
+  not an IPv4 address assigned to this Mac on an interface that is up.
+-->
+<html>
+<head>
+  <meta charset="utf-8">
+  <style>
+    #lanIP { width: 14em; }
+  </style>
+</head>
+<body>
+  <div class="pref-section">
+    <label for="lanIP">LAN address</label>
+    <input type="text" id="lanIP" data-pref-key="lanIP" placeholder="Automatic"
+           autocomplete="off" autocorrect="off" autocapitalize="off" spellcheck="false">
+    <p class="pref-help">
+      The IPv4 address the Apple TV uses to reach this Mac. Leave it empty to
+      detect it automatically.
+    </p>
+    <p class="pref-help">
+      Set it when a cast says ready but the TV never starts playing. That
+      happens with a VPN whose tunnel is not named <code>utun</code>, or when
+      this Mac has more than one network interface and the wrong one is picked.
+      It must be an address assigned to this Mac on the network the TV is on,
+      or the next cast refuses it.
+    </p>
+  </div>
+</body>
+</html>
