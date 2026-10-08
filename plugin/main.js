@@ -226,7 +226,8 @@ if (typeof module !== "undefined") {
 
 if (typeof iina !== "undefined") {
   var core = iina.core, mpv = iina.mpv, menu = iina.menu, sidebar = iina.sidebar,
-      utils = iina.utils, file = iina.file, console = iina.console, event = iina.event;
+      utils = iina.utils, file = iina.file, console = iina.console, event = iina.event,
+      preferences = iina.preferences;
 
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
@@ -396,6 +397,10 @@ if (typeof iina !== "undefined") {
       state = { phase: "error", url: null, pct: 0, msg: "cannot determine IINA process id" };
       return;
     }
+    // Read here, in the menu/onMessage (main-thread) context, and capture it:
+    // the serve args are built inside resolveBinDir's callback, which runs
+    // from a utils.exec promise, and nothing IINA-facing is called from there.
+    var lanIP = lanIPOverride(preferences.get("lanIP"));
     var duration = mpv.getNumber("duration") || 0;
     var outDir = utils.resolvePath("@tmp/hls");
     var gen = ++castGen;
@@ -429,6 +434,7 @@ if (typeof iina !== "undefined") {
         else serveArgs.push("-smap", String(tracks.sub.smap));
         serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
       }
+      if (lanIP) serveArgs.push("-ip", lanIP);
       utils.exec(helper, serveArgs, undefined, function (chunk) {
         if (gen !== castGen) return;
         var parsed = parseHelperEvents(stdoutRest, chunk);
