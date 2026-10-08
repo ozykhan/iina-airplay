@@ -79,7 +79,7 @@ a problem — it just tells the maintainer what to check before merging.
 
 | Path | What lives there |
 | --- | --- |
-| `plugin/` | The IINA plugin: `main.js` (JSContext) and `sidebar.html` (the cast UI webview) |
+| `plugin/` | The IINA plugin: `main.js` (JSContext), `sidebar.html` (the cast UI webview) and `preferences.html` (the settings page IINA shows under Plugins → Preferences) |
 | `helper/` | The Go supervisor — spawns `ffmpeg`, serves HLS, watchdog, playlist |
 | `packaging/` | `build-ffmpeg.sh`, `pack.sh`, `verify.sh` and the release gates |
 | `docs/` | Design reasoning, the prototype record, the distribution design, the release runbook |
