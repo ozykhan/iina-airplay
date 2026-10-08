@@ -21,7 +21,7 @@ fails=0
 DUMMY_SRC_ROOT="$TMP/no-such-plugin-source"
 
 # Builds a minimal package; callers mutate the staging dir via the hook first.
-# Includes every file verify.sh now asserts is present (sidebar.html,
+# Includes every file verify.sh now asserts is present (sidebar.html, preferences.html,
 # bin/VERSIONS, bin/ffmpeg-LICENSE.md, bin/COPYING.LGPLv2.1) so a hook that
 # targets one specific check doesn't also trip an unrelated presence check.
 make_pkg() {
@@ -36,6 +36,7 @@ make_pkg() {
 JSON
   echo "// plugin" > "$d/src/main.js"
   echo "<html></html>" > "$d/src/sidebar.html"
+  echo "<html></html>" > "$d/src/preferences.html"
   printf '#!/bin/sh\nexit 0\n' > "$d/src/bin/airplay-helper"
   printf '#!/bin/sh\nexit 0\n' > "$d/src/bin/ffmpeg"
   chmod 755 "$d/src/bin/airplay-helper" "$d/src/bin/ffmpeg"
@@ -70,6 +71,7 @@ unexecutable()   { chmod 644 "$1/bin/airplay-helper"; }
 bad_ghrepo()     { /usr/bin/sed -i '' 's|"ozykhan/iina-airplay"|"not a slug!"|' "$1/Info.json"; }
 drop_main()      { rm -f "$1/main.js"; }
 drop_sidebar()   { rm -f "$1/sidebar.html"; }
+drop_prefs()     { rm -f "$1/preferences.html"; }
 drop_copying()   { rm -f "$1/bin/COPYING.LGPLv2.1"; }
 
 # A real Mach-O, ad-hoc signed, then corrupted after signing (bytes appended).
@@ -112,6 +114,7 @@ expect_fail "malformed ghRepo"         "$(make_pkg ghrepo     bad_ghrepo)"      
 expect_fail "corrupted after signing"  "$(make_pkg corrupt    corrupt_signed)"    "signature"
 expect_fail "missing entry file"       "$(make_pkg noentry    drop_main)"         "entry file"
 expect_fail "missing sidebar.html"     "$(make_pkg nosidebar  drop_sidebar)"      "sidebar.html"
+expect_fail "missing preferences.html" "$(make_pkg noprefs    drop_prefs)"        "preferences.html"
 expect_fail "missing LGPL license copy" "$(make_pkg nocopying drop_copying)"      "COPYING"
 expect_fail "ffmpeg stand-in trips the encoder assertions" \
   "$(make_pkg fakeffmpeg fake_ffmpeg_binary)" "encoder"
@@ -135,6 +138,7 @@ expect_fail "quarantined package" "$quar_pkg" "quarantine"
 stale_root="$TMP/stale-plugin-src"
 mkdir -p "$stale_root"
 echo "<html></html>" > "$stale_root/sidebar.html"
+echo "<html></html>" > "$stale_root/preferences.html"
 cat > "$stale_root/Info.json" <<'JSON'
 {"name":"AirPlay","identifier":"dev.faruk.iina-airplay","version":"0.1.0",
  "ghRepo":"ozykhan/iina-airplay","ghVersion":1,"entry":"main.js","permissions":[]}
@@ -208,6 +212,7 @@ mkdir -p "$mroot" "$sroot"
 # The payload matches the package byte-for-byte...
 echo "// plugin" > "$sroot/main.js"
 echo "<html></html>" > "$sroot/sidebar.html"
+echo "<html></html>" > "$sroot/preferences.html"
 # ...while the manifest deliberately does not (ghVersion 2, package has 1).
 cat > "$mroot/Info.json" <<'JSON'
 {"name":"AirPlay","identifier":"dev.faruk.iina-airplay","version":"0.2.0",

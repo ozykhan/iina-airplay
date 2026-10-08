@@ -82,13 +82,14 @@ PY
 # --- plugin payload: the code, not just the manifest --------------------------
 # A package can have a perfectly valid Info.json and still ship none of the
 # actual plugin — nothing here previously asserted that the file Info.json
-# names as `entry` exists, nor sidebar.html, nor the licensing artifacts.
+# names as `entry` exists, nor sidebar.html or preferences.html, nor the licensing artifacts.
 # Read the entry filename from Info.json rather than hardcoding main.js, since
 # that's the contract IINA itself follows.
 entry="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])).get("entry",""))' "$TMP/Info.json" 2>/dev/null)"
 [ -n "$entry" ] || fail "Info.json has no entry"
 [ -s "$TMP/$entry" ] || fail "the entry file ($entry, named by Info.json) is missing or empty from the package"
 [ -s "$TMP/sidebar.html" ] || fail "sidebar.html is missing or empty from the package"
+[ -s "$TMP/preferences.html" ] || fail "preferences.html is missing or empty from the package (Info.json's preferencesPage; IINA shows an empty Preferences tab without it)"
 [ -s "$TMP/bin/VERSIONS" ] || fail "bin/VERSIONS is missing or empty from the package"
 [ -s "$TMP/bin/ffmpeg-LICENSE.md" ] || fail "bin/ffmpeg-LICENSE.md is missing or empty from the package"
 [ -s "$TMP/bin/COPYING.LGPLv2.1" ] || fail "bin/COPYING.LGPLv2.1 is missing or empty from the package (LGPL 2.1 requires shipping a copy of the license text, not just a link)"
@@ -100,7 +101,7 @@ entry="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])
 # what's in the repo. Compare byte-for-byte against plugin/ when it's
 # available (it may legitimately not be — this script also verifies packages
 # downloaded standalone, outside a repo checkout).
-for rel in "$entry" sidebar.html Info.json; do
+for rel in "$entry" sidebar.html preferences.html Info.json; do
   # Two source roots, because the package root flattens two repo locations:
   # the manifest comes from the repository root, the payload from plugin/.
   case "$rel" in
