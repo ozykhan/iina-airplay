@@ -108,6 +108,17 @@ function normalizeSource(p) {
   try { return decodeURIComponent(rest); } catch (e) { return rest; }
 }
 
+// The "LAN address" preference (Info.json preferenceDefaults.lanIP, edited in
+// Settings → Plugins → AirPlay → Preferences) is handed to the helper as
+// `serve -ip <addr>` when non-empty. The helper validates it (IPv4, assigned
+// to this Mac, interface up) and reports a bad value as an `error` event the
+// sidebar already shows, so the plugin only trims. Anything that isn't a
+// string — unset, or a stale non-string in the preferences store — means
+// automatic.
+function lanIPOverride(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 // ---- muted-mirror sync core (spec: docs/superpowers/specs/2026-08-30-native-controls-mirror-design.md) ----
 // The TV is the clock; mpv is the mirror. AirPlay HLS runs seconds behind any
 // local clock, so mpv's position is never authoritative during a cast. These
@@ -201,6 +212,7 @@ if (typeof module !== "undefined") {
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
+    lanIPOverride: lanIPOverride,
     newMirror: newMirror,
     mirrorOnMpvPause: mirrorOnMpvPause,
     mirrorOnMpvSeek: mirrorOnMpvSeek,
