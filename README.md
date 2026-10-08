@@ -128,8 +128,10 @@ pick the subsystem ending in `- AirPlay`.
 On macOS 15+, grant IINA the **Local Network** permission the first time it
 tries to serve, or the Apple TV can't reach the stream.
 
-For VPNs, multiple network interfaces and the helper's manual `-ip` override,
-see [LAN address selection](docs/distribution.md#lan-address-selection).
+If a cast says ready but the TV never plays, set the **LAN address** under
+Settings → Plugins → AirPlay → Preferences to the Mac's address on the TV's
+network. For VPNs, multiple network interfaces and the helper's manual `-ip`
+flag, see [LAN address selection](docs/distribution.md#lan-address-selection).
 
 ## Tests
 

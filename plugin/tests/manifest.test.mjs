@@ -14,7 +14,7 @@
 // manifest was simply not where IINA looks. Hence the root path below.
 import { test } from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 // Two levels up from plugin/tests/ — the repository root, the one location
 // IINA's update check can see.
@@ -46,4 +46,31 @@ test("the entry file named by the manifest is packaged from plugin/", () => {
   // so entry is resolved inside the PACKAGE, not next to this file.
   assert.equal(typeof info.entry, "string");
   assert.ok(info.entry.length > 0, "IINA needs an entry to load anything");
+});
+
+// Issue #33: the "LAN address" setting lives on an IINA preferences page.
+// IINA resolves preferencesPage relative to the plugin root (the package
+// root, which pack.sh fills from plugin/), reads preferenceDefaults for the
+// value before the user ever opens the page, and warns-and-ignores a
+// malformed preferenceDefaults — so both are asserted here, cheaply.
+test("preferencesPage names a file that exists under plugin/", () => {
+  assert.equal(typeof info.preferencesPage, "string");
+  assert.ok(existsSync(new URL("../" + info.preferencesPage, import.meta.url)),
+    `plugin/${info.preferencesPage} must exist — IINA resolves preferencesPage against the plugin root`);
+});
+
+test("preferenceDefaults.lanIP defaults to empty, meaning automatic", () => {
+  assert.equal(typeof info.preferenceDefaults, "object");
+  assert.equal(info.preferenceDefaults.lanIP, "");
+});
+
+// The page writes whatever key its input carries; main.js reads
+// preferenceDefaults' key. If the two ever drift apart the setting silently
+// does nothing — the page stores one key and the plugin reads the default.
+test("preferences.html binds the same key that preferenceDefaults declares", () => {
+  const page = readFileSync(new URL("../" + info.preferencesPage, import.meta.url), "utf8");
+  for (const key of Object.keys(info.preferenceDefaults)) {
+    assert.ok(page.includes(`data-pref-key="${key}"`),
+      `plugin/${info.preferencesPage} has no input bound to preference key "${key}"`);
+  }
 });

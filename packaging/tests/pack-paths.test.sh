@@ -22,15 +22,15 @@ fails=0
 # Read the real declarations out of the real script rather than restating them
 # here — a copy would drift and assert nothing. These lines are plain
 # VAR="$ROOT/..." assignments, so evaluating just them is safe.
-decls="$(grep -E '^PLUGIN_(INFO|MAIN|SIDEBAR)=' "$PACK")"
+decls="$(grep -E '^PLUGIN_(INFO|MAIN|SIDEBAR|PREFS)=' "$PACK")"
 if [ -z "$decls" ]; then
-  echo "FAIL: no PLUGIN_INFO/PLUGIN_MAIN/PLUGIN_SIDEBAR declarations found in pack.sh"
+  echo "FAIL: no PLUGIN_INFO/PLUGIN_MAIN/PLUGIN_SIDEBAR/PLUGIN_PREFS declarations found in pack.sh"
   echo "      (renamed? this test is asserting nothing until it is updated)"
   exit 1
 fi
 eval "$decls"
 
-for var in PLUGIN_INFO PLUGIN_MAIN PLUGIN_SIDEBAR; do
+for var in PLUGIN_INFO PLUGIN_MAIN PLUGIN_SIDEBAR PLUGIN_PREFS; do
   path="$(eval "printf '%s' \"\$$var\"")"
   if [ -z "$path" ]; then
     echo "FAIL: $var is declared in pack.sh but empty"

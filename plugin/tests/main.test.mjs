@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource } = require("../main.js");
+const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -209,4 +209,22 @@ test("subtitleLabel reports no subtitles when none is selected", () => {
 
 test("subtitleLabel is empty when there are no castable tracks", () => {
   assert.deepEqual(subtitleLabel(null), { label: "", warn: false });
+});
+
+// Issue #33: the "LAN address" preference is passed to the helper as -ip.
+// The helper validates it; the plugin only trims and passes it through, and
+// treats anything that isn't a string (unset, or a stale non-string value
+// in the preferences store) as "automatic".
+test("lanIPOverride trims a string value", () => {
+  assert.equal(lanIPOverride("192.168.1.20"), "192.168.1.20");
+  assert.equal(lanIPOverride("  192.168.1.20\n"), "192.168.1.20");
+  assert.equal(lanIPOverride("   "), "");
+});
+
+test("lanIPOverride is empty (automatic) for anything that isn't a string", () => {
+  assert.equal(lanIPOverride(""), "");
+  assert.equal(lanIPOverride(null), "");
+  assert.equal(lanIPOverride(undefined), "");
+  assert.equal(lanIPOverride(42), "");
+  assert.equal(lanIPOverride({ ip: "192.168.1.20" }), "");
 });

@@ -8,5 +8,7 @@
   "description": "Cast the current file to an AirPlay device: remuxes to HLS, serves on the LAN, and hands the stream to the TV. IINA stays your remote.",
   "entry": "main.js",
   "permissions": ["file-system", "show-osd"],
-  "sidebarTab": { "name": "AirPlay" }
+  "sidebarTab": { "name": "AirPlay" },
+  "preferencesPage": "preferences.html",
+  "preferenceDefaults": { "lanIP": "" }
 }

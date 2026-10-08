@@ -69,6 +69,12 @@ function loadPlugin(opts = {}) {
       read: () => (opts.binDirLookup ? "" : "/plugins/dev.faruk.iina-airplay/bin"),
       write: () => {},
     },
+    // Issue #33: preferences.get is synchronous in the JSContext and returns
+    // the stored value or Info.json's preferenceDefaults entry. The default
+    // for lanIP is "" (automatic), so that's the default here too.
+    preferences: {
+      get: (k) => (k === "lanIP" ? (opts.lanIP !== undefined ? opts.lanIP : "") : undefined),
+    },
     console: { log: () => {} },
   };
 
@@ -432,4 +438,33 @@ test("subtitle label is available before any cast starts", () => {
   const s = p.state();
   assert.equal(s.phase, "idle");
   assert.equal(s.subs.label, "No subtitles");
+});
+
+// Issue #33: the "LAN address" preference reaches the helper as `serve -ip`.
+test("serve args carry no -ip when the LAN address setting is empty", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  assert.equal(serves(p)[0].args.indexOf("-ip"), -1);
+});
+
+test("serve args carry -ip when the LAN address setting is set", () => {
+  const p = loadPlugin({ lanIP: "192.168.1.20" });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  const i = args.indexOf("-ip");
+  assert.notEqual(i, -1, "expected -ip in serve args");
+  assert.equal(args[i + 1], "192.168.1.20");
+});
+
+test("the LAN address setting is trimmed before it reaches the helper", () => {
+  const p = loadPlugin({ lanIP: "  192.168.1.20 " });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(args[args.indexOf("-ip") + 1], "192.168.1.20");
+});
+
+test("a whitespace-only LAN address setting means automatic", () => {
+  const p = loadPlugin({ lanIP: "   " });
+  p.clickMenu();
+  assert.equal(serves(p)[0].args.indexOf("-ip"), -1);
 });

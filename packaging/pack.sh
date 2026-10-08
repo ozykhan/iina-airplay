@@ -15,6 +15,7 @@ HELPER="$ROOT/build/helper/airplay-helper"
 PLUGIN_INFO="$ROOT/Info.json"
 PLUGIN_MAIN="$ROOT/plugin/main.js"
 PLUGIN_SIDEBAR="$ROOT/plugin/sidebar.html"
+PLUGIN_PREFS="$ROOT/plugin/preferences.html"
 CANONICAL_PKG="$ROOT/build/iina-airplay.iinaplgz"
 
 # A failed run past this point must not leave the PREVIOUS package sitting at
@@ -34,7 +35,7 @@ done
 # shipping a package that only links gnu.org.
 [ -f "$FFLICENSE" ] || { echo "pack: missing $FFLICENSE — the ffmpeg source tree is missing its LGPL license text; re-run build-ffmpeg.sh" >&2; exit 1; }
 
-for f in "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR"; do
+for f in "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$PLUGIN_PREFS"; do
   [ -f "$f" ] || { echo "pack: missing $f — the plugin source tree is incomplete" >&2; exit 1; }
 done
 
@@ -98,7 +99,7 @@ source_sha256="$(grep '^source_sha256=' "$FFVERSION" | cut -d= -f2-)"
 source_url="$(grep '^source_url=' "$FFVERSION" | cut -d= -f2-)"
 
 rm -rf "$ROOT/build/stage" && mkdir -p "$STAGE/bin"
-cp "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$STAGE/"
+cp "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$PLUGIN_PREFS" "$STAGE/"
 cp "$FFMPEG" "$STAGE/bin/ffmpeg"
 cp "$HELPER" "$STAGE/bin/airplay-helper"
 cp "$FFLICENSE" "$STAGE/bin/COPYING.LGPLv2.1"

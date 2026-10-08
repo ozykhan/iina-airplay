@@ -114,8 +114,8 @@ with the `.iinaplgz` fetched from any mirror.
 
 ```
 iina-airplay.iinaplgz            (24.7 MB measured: 24,674,608 bytes, zipped)
-├── Info.json                    sidebarTab, permissions, ghRepo/ghVersion (updates)
-├── main.js / sidebar.html / …   the plugin
+├── Info.json                    sidebarTab, preferencesPage, ghRepo/ghVersion (updates)
+├── main.js / sidebar.html / preferences.html   the plugin
 └── bin/
     ├── airplay-helper           Go, universal, ad-hoc signed (12.2 MB)
     ├── ffmpeg                   static, universal, LGPL configure (43.3 MB)
@@ -161,13 +161,17 @@ interface. With multiple eligible interfaces, interface order decides; with
 none, the VPN address remains the fallback. Without a usable default-route
 address, the first up, non-loopback interface with a usable IPv4 wins.
 
-For a manual helper run, append `-ip <lan-ip>` to the normal `serve`
-arguments, replacing `<lan-ip>` with the Mac's address on the TV's LAN.
+To override the choice, enter the Mac's address on the TV's LAN in the
+**LAN address** field under Settings → Plugins → AirPlay → Preferences
+(`preferenceDefaults.lanIP` in `Info.json`; empty means automatic). The
+plugin passes it to the helper as `serve -ip <lan-ip>` on the next cast; for
+a manual helper run, append the same flag to the normal `serve` arguments.
 The override rejects malformed, IPv6, loopback, link-local and unassigned
 addresses, and addresses on down interfaces. It checks local assignment and
-interface state, not reachability — use an interface the TV can reach.
-The server still listens on `0.0.0.0`;
-the flag only changes the advertised host. The plugin has no UI setting for it.
+interface state, not reachability — use an interface the TV can reach. A
+rejected value ends the cast with the helper's message in the sidebar. The
+server still listens on `0.0.0.0`; the setting only changes the advertised
+host.
 
 ## The ffmpeg build
 

@@ -108,6 +108,17 @@ function normalizeSource(p) {
   try { return decodeURIComponent(rest); } catch (e) { return rest; }
 }
 
+// The "LAN address" preference (Info.json preferenceDefaults.lanIP, edited in
+// Settings → Plugins → AirPlay → Preferences) is handed to the helper as
+// `serve -ip <addr>` when non-empty. The helper validates it (IPv4, assigned
+// to this Mac, interface up) and reports a bad value as an `error` event the
+// sidebar already shows, so the plugin only trims. Anything that isn't a
+// string — unset, or a stale non-string in the preferences store — means
+// automatic.
+function lanIPOverride(value) {
+  return typeof value === "string" ? value.trim() : "";
+}
+
 // ---- muted-mirror sync core (spec: docs/superpowers/specs/2026-08-30-native-controls-mirror-design.md) ----
 // The TV is the clock; mpv is the mirror. AirPlay HLS runs seconds behind any
 // local clock, so mpv's position is never authoritative during a cast. These
@@ -201,6 +212,7 @@ if (typeof module !== "undefined") {
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
+    lanIPOverride: lanIPOverride,
     newMirror: newMirror,
     mirrorOnMpvPause: mirrorOnMpvPause,
     mirrorOnMpvSeek: mirrorOnMpvSeek,
@@ -214,7 +226,8 @@ if (typeof module !== "undefined") {
 
 if (typeof iina !== "undefined") {
   var core = iina.core, mpv = iina.mpv, menu = iina.menu, sidebar = iina.sidebar,
-      utils = iina.utils, file = iina.file, console = iina.console, event = iina.event;
+      utils = iina.utils, file = iina.file, console = iina.console, event = iina.event,
+      preferences = iina.preferences;
 
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
@@ -384,6 +397,10 @@ if (typeof iina !== "undefined") {
       state = { phase: "error", url: null, pct: 0, msg: "cannot determine IINA process id" };
       return;
     }
+    // Read here, in the menu/onMessage (main-thread) context, and capture it:
+    // the serve args are built inside resolveBinDir's callback, which runs
+    // from a utils.exec promise, and nothing IINA-facing is called from there.
+    var lanIP = lanIPOverride(preferences.get("lanIP"));
     var duration = mpv.getNumber("duration") || 0;
     var outDir = utils.resolvePath("@tmp/hls");
     var gen = ++castGen;
@@ -417,6 +434,7 @@ if (typeof iina !== "undefined") {
         else serveArgs.push("-smap", String(tracks.sub.smap));
         serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
       }
+      if (lanIP) serveArgs.push("-ip", lanIP);
       utils.exec(helper, serveArgs, undefined, function (chunk) {
         if (gen !== castGen) return;
         var parsed = parseHelperEvents(stdoutRest, chunk);
