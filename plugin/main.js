@@ -448,7 +448,10 @@ if (typeof iina !== "undefined") {
           else if (ev.event === "stopped") { state = { phase: "idle", url: null, pct: 0, msg: null }; }
         }
       }, function (errChunk) {
-        console.log("[helper:stderr] " + errChunk.trim());
+        // IINA's stderr handler keeps firing with "" after EOF until the
+        // process exits (issue #38); don't log those.
+        var line = errChunk.trim();
+        if (line) console.log("[helper:stderr] " + line);
       }).then(function () {
         if (gen !== castGen) return;
         if (state.phase !== "error") state = { phase: "idle", url: null, pct: 0, msg: null };
