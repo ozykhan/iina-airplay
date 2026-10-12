@@ -16,9 +16,11 @@ function loadPage() {
   const el = (id) => (els[id] ||= { id, textContent: "", className: "", title: "",
                                     disabled: false, style: {}, onclick: null });
   const listeners = {};
+  const trackListeners = {};
   const video = Object.assign(el("v"), {
     src: "", paused: true, muted: true, currentTime: 0, error: null,
     seekable: { length: 0 },
+    textTracks: { addEventListener: (name, cb) => { trackListeners[name] = cb; } },
     addEventListener: (name, cb) => { listeners[name] = cb; },
     play() { this.paused = false; return Promise.resolve(); },
     pause() { this.paused = true; },
@@ -41,6 +43,7 @@ function loadPage() {
     state: (s) => handlers.state(Object.assign(
       { pct: 0, msg: null, duration: 100, sync: null, subs: { label: "", warn: false } }, s)),
     fire: (name, ev) => listeners[name](ev || {}),
+    addTrack: (track) => trackListeners.addtrack({ track }),
     click: (id) => els[id].onclick(),
   };
 }
@@ -80,6 +83,21 @@ test("Try again after a page-side error reloads the stream, no start", () => {
   p.state({ phase: "ready", url: URL_ });
   assert.equal(p.video.src, URL_);
   assert.equal(p.els.headline.textContent, "Ready to send");
+});
+
+// WebKit deselects every subtitle option on the AVPlayerItem when it first
+// loads the stream's tracks on the Mac, and a TV picked afterwards inherits
+// that selection: no subtitles on a first cast (#38). The only subtitle track
+// is the one the user had on in IINA, so the page selects it again.
+test("the stream's subtitle track is selected, so the TV inherits it", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_ });
+  const subs = { kind: "subtitles", mode: "disabled" };
+  const meta = { kind: "metadata", mode: "disabled" };
+  p.addTrack(subs);
+  p.addTrack(meta);
+  assert.equal(subs.mode, "hidden");
+  assert.equal(meta.mode, "disabled");
 });
 
 test("Try again after a pipeline error starts a new cast", () => {
