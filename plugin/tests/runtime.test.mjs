@@ -20,6 +20,8 @@ function loadPlugin(opts = {}) {
   const sets = [];           // [name, value] pushed by mpv.set
   const events = {};         // event name -> callback registered via event.on
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
+  const stderrs = [];        // per-serve stderr callbacks
+  const logs = [];           // console.log lines
   let menuCallback = null;
   let loadedFile = null;
   let loads = 0;
@@ -56,9 +58,10 @@ function loadPlugin(opts = {}) {
     },
     utils: {
       resolvePath: (p) => "/plugins/.data/dev.faruk.iina-airplay" + (p === "@tmp/hls" ? "/tmp/hls" : ""),
-      exec: (bin, args, cwd, onStdout) => {
+      exec: (bin, args, cwd, onStdout, onStderr) => {
         execs.push({ bin, args });
         if (typeof onStdout === "function") stdouts.push(onStdout);
+        if (typeof onStderr === "function") stderrs.push(onStderr);
         // opts.binDirLookup scripts the /bin/sh lookup that resolveBinDir runs
         // when no bin dir is cached; everything else hangs, as before.
         if (bin === "/bin/sh" && opts.binDirLookup) return Promise.resolve(opts.binDirLookup);
@@ -75,7 +78,7 @@ function loadPlugin(opts = {}) {
     preferences: {
       get: (k) => (k === "lanIP" ? (opts.lanIP !== undefined ? opts.lanIP : "") : undefined),
     },
-    console: { log: () => {} },
+    console: { log: (m) => logs.push(m) },
   };
 
   globalThis.iina = iina;
@@ -83,10 +86,11 @@ function loadPlugin(opts = {}) {
   try { require("../main.js"); } finally { delete globalThis.iina; delete require.cache[MAIN]; }
 
   return {
-    execs, posted, osd,
+    execs, posted, osd, logs,
     flags, sets,
     fire: (name) => { assert.ok(events[name], `no event handler for "${name}"`); events[name](); },
     helperSays: (obj) => { assert.ok(stdouts.length, "no serve running"); stdouts.at(-1)(JSON.stringify(obj) + "\n"); },
+    helperStderr: (chunk) => { assert.ok(stderrs.length, "no serve running"); stderrs.at(-1)(chunk); },
     clickMenu: () => menuCallback(),
     send: (name, data) => {
       assert.ok(messages[name], `no onMessage handler registered for "${name}"`);
@@ -467,4 +471,23 @@ test("a whitespace-only LAN address setting means automatic", () => {
   const p = loadPlugin({ lanIP: "   " });
   p.clickMenu();
   assert.equal(serves(p)[0].args.indexOf("-ip"), -1);
+});
+
+// Issue #38: IINA's exec stderr readabilityHandler keeps firing with "" after
+// the helper's stderr hits EOF, until the process terminationHandler clears it
+// (JavascriptAPIUtils.swift, exec). Those empty chunks must not reach the log.
+test("empty helper stderr chunks are not logged", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  for (let i = 0; i < 3; i++) p.helperStderr("");
+  p.helperStderr("\n");
+  assert.deepEqual(p.logs.filter((l) => l.startsWith("[helper:stderr]")), []);
+});
+
+test("non-empty helper stderr is logged, trimmed", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.helperStderr("ffmpeg: something went wrong\n");
+  assert.deepEqual(p.logs.filter((l) => l.startsWith("[helper:stderr]")),
+    ["[helper:stderr] ffmpeg: something went wrong"]);
 });
