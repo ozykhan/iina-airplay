@@ -303,6 +303,16 @@
     v.muted = !onTV;   // silent on the Mac, audible on the TV
   });
   v.addEventListener("ended", function () { ended = true; });
+  // WebKit deselects every subtitle option on the AVPlayerItem as soon as it
+  // loads the stream's tracks on the Mac (processMediaSelectionOptions), and
+  // a TV picked after that inherits the empty selection: a first cast came up
+  // without subtitles, a second one (straight onto the TV) with them (#38).
+  // The stream only carries a subtitle track when one was on in IINA, so
+  // select it. "hidden" selects it without drawing it on the 1px element.
+  v.textTracks.addEventListener("addtrack", function (ev) {
+    var t = ev.track;
+    if (t.kind === "subtitles" || t.kind === "captions") t.mode = "hidden";
+  });
   primary.onclick = function () {
     if (primaryAct === "pick") showPicker();
     else if (primaryAct === "reload") {
