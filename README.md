@@ -30,7 +30,6 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
 
 |                 |                                                                                                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| macOS 15+       | Grant IINA the **Local Network** permission on first cast, or the TV can't reach the stream                                                                         |
 | Image subtitles | PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work                                                                                            |
 | Start position  | The TV starts from the beginning, then jumps to where IINA was once packaging has reached that point. Best-effort: if the TV ends up elsewhere, IINA follows the TV |
 | Disk space      | A cast writes a second copy of the file (the HLS remux) to IINA's temp directory for as long as it runs; it is deleted when the cast stops or IINA quits            |
@@ -70,9 +69,6 @@ extracts it without applying `com.apple.quarantine`, so the bundled binaries
 run under Gatekeeper with only their ad-hoc signatures. Downloading the package
 in a browser and opening it by hand quarantines everything inside it, and the
 plugin will tell you to reinstall through IINA when that happens.
-
-On macOS 15+, grant IINA the **Local Network** permission the first time it
-casts, or the Apple TV cannot reach the stream.
 
 ## Cast
 
@@ -124,9 +120,6 @@ IINA Settings → Plugins. Plugin logs go to IINA's log, which is off by default
 turn on **Enable advanced settings** and **Enable logging to file** under
 Settings → Advanced, restart IINA, then open **Window → Log Viewer** (⌃⌘L) and
 pick the subsystem ending in `- AirPlay`.
-
-On macOS 15+, grant IINA the **Local Network** permission the first time it
-tries to serve, or the Apple TV can't reach the stream.
 
 If a cast says ready but the TV never plays, set the **LAN address** under
 Settings → Plugins → AirPlay → Preferences to the Mac's address on the TV's

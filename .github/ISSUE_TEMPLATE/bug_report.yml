@@ -66,9 +66,8 @@ body:
       render: text
 
   - type: checkboxes
-    id: local-network
+    id: checks
     attributes:
       label: Checks
       options:
-        - label: On macOS 15+, IINA has the Local Network permission granted.
         - label: I installed through IINA's plugin installer, or built from source — not by downloading the `.iinaplgz` in a browser.
