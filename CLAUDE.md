@@ -132,8 +132,9 @@ logging to file** on — read once at launch, so restart IINA after flipping the
 JS dev tool (`isInspectable` is on for macOS 13.3+, so Safari's Web Inspector can
 attach to plugin WebViews).
 
-Requires a local `ffmpeg` (`brew install ffmpeg`) and, on macOS 15+, Local Network
-permission granted to IINA.
+Requires a local `ffmpeg` (`brew install ffmpeg`). No Local Network permission is
+needed: the helper only accepts inbound TCP and AirPlay goes through WebKit, neither
+of which macOS gates (Apple TN3179). IINA never prompts and never appears in that list.
 
 ## Working notes
 

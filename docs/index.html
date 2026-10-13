@@ -208,7 +208,6 @@
     <h2 id="limits">Limits, up front</h2>
     <div class="table-wrap">
       <table>
-        <tr><th scope="row">macOS 15+</th><td>Grant IINA the <strong>Local Network</strong> permission on first cast, or the TV can't reach the stream.</td></tr>
         <tr><th scope="row">Image subtitles</th><td>PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work.</td></tr>
         <tr><th scope="row">Start position</th><td>The TV starts from the beginning, then jumps to where IINA was once packaging has reached that point. Best-effort: if the TV ends up elsewhere, IINA follows the TV.</td></tr>
         <tr><th scope="row">Disk space</th><td>A cast writes a second copy of the file (the HLS remux) to IINA's temp directory for as long as it runs. It is deleted when the cast stops or IINA quits.</td></tr>
@@ -223,7 +222,6 @@
     <p>IINA 1.4 has no store, so give it the repository instead. The same slug also works in the field at the top of the 1.5 store.</p>
     <code class="path">IINA → Settings → Plugins → Install → ozykhan/iina-airplay</code>
     <p>Either way, IINA fetches the package from the latest GitHub release and extracts it without applying the quarantine flag, so the bundled binaries run under Gatekeeper with their ad-hoc signatures. A package downloaded in a browser and opened by hand is quarantined all the way down, and the plugin will ask you to reinstall through IINA if that happens.</p>
-    <p>On macOS 15 and later, grant IINA the <strong>Local Network</strong> permission the first time it casts, or the Apple TV cannot reach the stream.</p>
     <p>Everything the plugin needs ships inside the package. There are no prerequisites and nothing is downloaded at runtime.</p>
     <p>To cast, play a file and pick <strong>Plugins → AirPlay → Cast to TV</strong> from the menu bar, or open the sidebar's <strong>Plugins</strong> pane, choose the <strong>AirPlay</strong> tab and press <strong>Start casting</strong>. Once the file is packaged, <strong>Send to TV</strong> opens the AirPlay picker. The plugin's page under Settings → Plugins only enables it and shows its log; the controls live in the sidebar.</p>
   </section>

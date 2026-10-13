@@ -45,9 +45,6 @@ ending in `- AirPlay`; the files are under `~/Library/Logs/com.colliderli.iina/`
 Safari's Web Inspector can also attach to the plugin's webviews
 (`isInspectable` is on) for the sidebar page's own console.
 
-On macOS 15+, grant IINA the **Local Network** permission the first time it
-serves a stream, or the Apple TV cannot reach it.
-
 ## Tests
 
 ```bash

@@ -42,9 +42,6 @@ IINA's installer applies no \`com.apple.quarantine\`, so the bundled binaries ru
 under Gatekeeper on their ad-hoc signatures alone. Downloading the
 \`.iinaplgz\` by hand and opening it quarantines everything inside it.
 
-On macOS 15+, grant IINA the **Local Network** permission the first time it
-casts, or the Apple TV cannot reach the stream.
-
 Everything the plugin needs ships inside the package. There are no
 prerequisites and nothing is downloaded at runtime.
 
