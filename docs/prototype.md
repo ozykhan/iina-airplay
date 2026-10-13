@@ -11,8 +11,8 @@
 Three tests, in order. Each one kills a different assumption.
 
 Prerequisite: `brew install ffmpeg`. The Mac and the Apple TV must be on the same
-network, and macOS 15+ will ask for **Local Network** permission the first time —
-grant it, or the Apple TV cannot reach the stream.
+network. (An earlier version of this note predicted a macOS 15+ **Local Network**
+prompt; none appeared, and none is needed — see `docs/feasibility.md`.)
 
 ---
 

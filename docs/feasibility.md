@@ -90,7 +90,9 @@ build recipe and the compliance obligations are in `docs/distribution.md`.
 
 ## Known friction
 
-- macOS 15+ **Local Network** privacy prompt for LAN serving; the responsible process is IINA.
+- ~~macOS 15+ **Local Network** privacy prompt for LAN serving; the responsible process is IINA.~~
+  Never materialised: accepting inbound TCP and AirPlay are both outside Local Network
+  privacy (Apple TN3179), and IINA never prompts. See issue #42.
 - Files on network shares / seedbox mounts are fine — the helper reads and re-serves them.
   Remote URLs as *sources* are declined: the bundled ffmpeg is built `--disable-network`.
 - No frame-accurate position sync between IINA and the Apple TV. The muted mirror corrects drift
