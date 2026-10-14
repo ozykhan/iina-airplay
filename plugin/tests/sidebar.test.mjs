@@ -107,3 +107,45 @@ test("Try again after a pipeline error starts a new cast", () => {
   p.click("primary");
   assert.deepEqual(p.posted.map(([n]) => n).filter((n) => n === "start"), ["start"]);
 });
+
+// Issue #42: WebKit's media error 4 carries no reason, so the page hands the
+// failure to main.js, which probes the URL and sends back a diagnosis.
+test("a page-side media error is reported to main.js with its URL and code", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_ });
+  p.video.error = { code: 4 };
+  p.fire("error");
+  assert.deepEqual(p.posted.filter(([n]) => n === "mediaError"), [], "the automatic retry is not a failure yet");
+  p.fire("error");
+  // JSON round-trip: the page's object literal comes from the vm's realm.
+  assert.deepEqual(JSON.parse(JSON.stringify(p.posted.filter(([n]) => n === "mediaError"))),
+    [["mediaError", { url: URL_, code: 4 }]]);
+});
+
+test("main.js's diagnosis for the loaded stream replaces the bare media error", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_ });
+  p.video.error = { code: 4 };
+  p.fire("error");
+  p.fire("error");
+  p.state({ phase: "ready", url: URL_, diag: { url: URL_, msg: "This Mac can't reach its own stream" } });
+  assert.equal(p.els.headline.textContent, "Couldn't cast");
+  assert.equal(p.els.sub.textContent, "This Mac can't reach its own stream");
+  assert.equal(p.els.sub.title, "This Mac can't reach its own stream");
+});
+
+test("a diagnosis for another stream is not shown", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_ });
+  p.video.error = { code: 4 };
+  p.fire("error");
+  p.fire("error");
+  p.state({ phase: "ready", url: URL_, diag: { url: "http://192.168.1.2:4000/master.m3u8", msg: "stale" } });
+  assert.match(p.els.sub.textContent, /media error 4/);
+});
+
+test("a diagnosis alone does not put the page in the error row", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_, diag: { url: URL_, msg: "old" } });
+  assert.equal(p.els.headline.textContent, "Ready to send");
+});

@@ -119,6 +119,29 @@ function lanIPOverride(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+// WebKit reports a stream it couldn't fetch at all (refused, unreachable,
+// 404) as media error 4 with an empty MediaError.message, which is all a user
+// or a bug report ever saw (issue #42). The plugin probes the URL with curl,
+// spawned by IINA so the Mac's firewall, VPN and network filters treat it as
+// they treat IINA's webview, and names what it found. `probe` is utils.exec's
+// {status, stdout, stderr} for `curl -w %{http_code}`, or null if curl
+// couldn't run.
+function describeMediaFailure(url, code, probe) {
+  var err = "media error " + (code === undefined || code === null ? "?" : code);
+  var hostPort = String(url).replace(/^[a-z]+:\/\//i, "").split("/")[0];
+  if (!probe) return "Stream failed to load (" + err + ") from " + hostPort + ".";
+  if (probe.status !== 0) {
+    var reason = String(probe.stderr || "").trim().replace(/^curl: \(\d+\) /, "") ||
+                 "curl exit " + probe.status;
+    return "This Mac can't reach its own stream at " + hostPort + ": " + reason +
+           ". A firewall, VPN or network filter may be blocking it, or the " +
+           "address is wrong — set LAN address in the plugin's preferences.";
+  }
+  var http = String(probe.stdout || "").trim();
+  if (http !== "200") return "The stream server answered HTTP " + http + " (" + err + ").";
+  return "This Mac reaches the stream at " + url + ", but WebKit wouldn't play it (" + err + ").";
+}
+
 // ---- muted-mirror sync core (spec: docs/superpowers/specs/2026-08-30-native-controls-mirror-design.md) ----
 // The TV is the clock; mpv is the mirror. AirPlay HLS runs seconds behind any
 // local clock, so mpv's position is never authoritative during a cast. These
@@ -213,6 +236,7 @@ if (typeof module !== "undefined") {
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
     lanIPOverride: lanIPOverride,
+    describeMediaFailure: describeMediaFailure,
     newMirror: newMirror,
     mirrorOnMpvPause: mirrorOnMpvPause,
     mirrorOnMpvSeek: mirrorOnMpvSeek,
@@ -255,6 +279,7 @@ if (typeof iina !== "undefined") {
     // which IINA runs on the main thread.
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      diag: state.diag || null,
       duration: mpv.getNumber("duration") || 0,
       subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
       sync: mirror === null ? null : {
@@ -441,7 +466,10 @@ if (typeof iina !== "undefined") {
         stdoutRest = parsed.rest;
         for (var i = 0; i < parsed.events.length; i++) {
           var ev = parsed.events[i];
-          if (ev.event === "ready") { state.phase = "ready"; state.url = ev.url; }
+          if (ev.event === "ready") {
+            state.phase = "ready"; state.url = ev.url;
+            console.log("[cast] stream ready at " + ev.url);
+          }
           else if (ev.event === "progress") { state.pct = ev.pct; }
           else if (ev.event === "packaged") { state.phase = state.phase === "ready" ? "packaged" : state.phase; state.pct = 100; }
           else if (ev.event === "error") { state = { phase: "error", url: null, pct: 0, msg: ev.msg }; }
@@ -510,6 +538,26 @@ if (typeof iina !== "undefined") {
     sidebar.onMessage("stop", function () {
       stopCast();
       sidebar.postMessage("state", stateForPage());
+    });
+    // The page's <video> failed to load the stream twice (issue #42). Probe
+    // the URL and leave the result on state.diag for the page's next poll.
+    // Only the current stream counts: a late report about a stream that has
+    // since been replaced or stopped would describe the wrong thing.
+    sidebar.onMessage("mediaError", function (d) {
+      if (!d || !state.url || d.url !== state.url) return;
+      var gen = castGen, url = state.url;
+      console.log("[cast] the page couldn't load " + url + " (media error " + (d.code == null ? "?" : d.code) + "); probing it");
+      state.diag = null;
+      function report(probe) {
+        if (gen !== castGen || state.url !== url) return;
+        var msg = describeMediaFailure(url, d.code, probe);
+        state.diag = { url: url, msg: msg };
+        console.log("[cast] " + msg);
+      }
+      // Absolute path: utils.exec runs with an empty PATH.
+      utils.exec("/usr/bin/curl", ["-sS", "-o", "/dev/null", "-w", "%{http_code}",
+                                   "--max-time", "5", url])
+        .then(report, function () { report(null); });
     });
     sidebar.onMessage("tvState", function (tv) {
       reapMirror(); // a helper-initiated teardown may have left a stale mirror

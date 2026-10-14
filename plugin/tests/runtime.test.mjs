@@ -65,6 +65,11 @@ function loadPlugin(opts = {}) {
         // opts.binDirLookup scripts the /bin/sh lookup that resolveBinDir runs
         // when no bin dir is cached; everything else hangs, as before.
         if (bin === "/bin/sh" && opts.binDirLookup) return Promise.resolve(opts.binDirLookup);
+        // opts.curl scripts the reachability probe after a page media error
+        // (issue #42): a result object resolves, an Error rejects.
+        if (bin === "/usr/bin/curl" && opts.curl) {
+          return opts.curl instanceof Error ? Promise.reject(opts.curl) : Promise.resolve(opts.curl);
+        }
         return new Promise(() => {});
       },
     },
@@ -490,4 +495,63 @@ test("non-empty helper stderr is logged, trimmed", () => {
   p.helperStderr("ffmpeg: something went wrong\n");
   assert.deepEqual(p.logs.filter((l) => l.startsWith("[helper:stderr]")),
     ["[helper:stderr] ffmpeg: something went wrong"]);
+});
+
+// Issue #42: a page-side "media error 4" arrived with no URL and no reason in
+// either the sidebar or IINA's log, so a report couldn't say what failed.
+const STREAM = "http://192.168.1.2:5000/master.m3u8";
+const curls = (p) => p.execs.filter((e) => e.bin === "/usr/bin/curl");
+const tick = () => new Promise((r) => setImmediate(r));
+
+test("the stream URL is logged when the helper reports ready", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM });
+  assert.ok(p.logs.some((l) => l.includes(STREAM)), "expected the stream URL in the log");
+});
+
+test("a page media error probes the stream and reports why it failed", async () => {
+  const p = loadPlugin({ curl: { status: 7, stdout: "000",
+    stderr: "curl: (7) Failed to connect to 192.168.1.2 port 5000 after 1 ms: Couldn't connect to server" } });
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM });
+  p.send("mediaError", { url: STREAM, code: 4 });
+  assert.equal(curls(p).length, 1);
+  assert.equal(curls(p)[0].args.at(-1), STREAM);
+  assert.ok(p.logs.some((l) => l.includes("media error 4") && l.includes(STREAM)));
+  await tick();
+  p.send("getState");
+  const diag = p.state().diag;
+  assert.equal(diag.url, STREAM);
+  assert.match(diag.msg, /can't reach its own stream/);
+  assert.ok(p.logs.some((l) => l.includes("Couldn't connect to server")));
+});
+
+test("a curl that fails to run still leaves a diagnosis naming the URL", async () => {
+  const p = loadPlugin({ curl: new Error("no such file") });
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM });
+  p.send("mediaError", { url: STREAM, code: 4 });
+  await tick();
+  p.send("getState");
+  assert.match(p.state().diag.msg, /media error 4/);
+});
+
+test("a media error for a stream that is no longer current is ignored", () => {
+  const p = loadPlugin({ curl: { status: 0, stdout: "200", stderr: "" } });
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM });
+  p.send("mediaError", { url: "http://192.168.1.2:4000/master.m3u8", code: 4 });
+  assert.equal(curls(p).length, 0);
+});
+
+test("a probe that settles after the cast was stopped is dropped", async () => {
+  const p = loadPlugin({ curl: { status: 0, stdout: "200", stderr: "" } });
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM });
+  p.send("mediaError", { url: STREAM, code: 4 });
+  p.send("stop");
+  await tick();
+  p.send("getState");
+  assert.equal(p.state().diag, null);
 });

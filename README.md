@@ -126,6 +126,11 @@ Settings → Plugins → AirPlay → Preferences to the Mac's address on the TV'
 network. For VPNs, multiple network interfaces and the helper's manual `-ip`
 flag, see [LAN address selection](docs/distribution.md#lan-address-selection).
 
+If the sidebar says **This Mac can't reach its own stream**, the stream server
+is running but something between IINA and it — a firewall, a VPN client, a
+network filter — refuses the connection, or the advertised address is wrong.
+The message carries curl's reason, and the full stream URL is in IINA's log.
+
 ## Tests
 
 ```sh

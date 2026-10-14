@@ -227,7 +227,8 @@
       // While the cast is still live only the page failed: the helper is
       // still serving, so Try again reloads the stream rather than asking
       // main.js to start (a no-op mid-cast) or repackaging from scratch.
-      r = { dot: "bad", headline: "Couldn't cast", sub: s.msg || localErr,
+      var diag = s.diag && s.diag.url === loadedURL ? s.diag.msg : "";
+      r = { dot: "bad", headline: "Couldn't cast", sub: s.msg || diag || localErr,
             warn: true, meter: false, pct: 0, done: false,
             primary: "Try again", act: casting ? "reload" : "start",
             accent: true, off: false,
@@ -291,8 +292,11 @@
       v.src = loadedURL;
       v.play().catch(function () {});
     } else {
-      localErr = "Stream failed to load (media error " +
-        (v.error ? v.error.code : "?") + ").";
+      var code = v.error ? v.error.code : null;
+      localErr = "Stream failed to load (media error " + (code === null ? "?" : code) + ").";
+      // Error 4 never says why (issue #42); main.js probes the URL and
+      // answers with state.diag, which replaces localErr once it arrives.
+      iina.postMessage("mediaError", { url: loadedURL, code: code });
     }
   });
   v.addEventListener("webkitplaybacktargetavailabilitychanged", function (ev) {

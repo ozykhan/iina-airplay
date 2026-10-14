@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride } = require("../main.js");
+const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -227,4 +227,45 @@ test("lanIPOverride is empty (automatic) for anything that isn't a string", () =
   assert.equal(lanIPOverride(undefined), "");
   assert.equal(lanIPOverride(42), "");
   assert.equal(lanIPOverride({ ip: "192.168.1.20" }), "");
+});
+
+// Issue #42: WebKit reports any stream it can't fetch as media error 4 with an
+// empty MediaError.message, so the plugin probes the URL with curl from IINA
+// and turns the result into something a user (or a bug report) can act on.
+const STREAM = "http://192.168.1.2:5000/master.m3u8";
+
+test("describeMediaFailure names an unreachable stream and curl's reason", () => {
+  const msg = describeMediaFailure(STREAM, 4, {
+    status: 7, stdout: "000",
+    stderr: "curl: (7) Failed to connect to 192.168.1.2 port 5000 after 1 ms: Couldn't connect to server\n",
+  });
+  assert.match(msg, /can't reach its own stream at 192\.168\.1\.2:5000/);
+  assert.match(msg, /Failed to connect to 192\.168\.1\.2 port 5000 after 1 ms: Couldn't connect to server/);
+  assert.doesNotMatch(msg, /curl: \(7\)/);
+  assert.match(msg, /LAN address/);
+});
+
+test("describeMediaFailure reports the HTTP status of a non-200 answer", () => {
+  const msg = describeMediaFailure(STREAM, 4, { status: 0, stdout: "404", stderr: "" });
+  assert.match(msg, /HTTP 404/);
+  assert.match(msg, /media error 4/);
+});
+
+test("describeMediaFailure says WebKit refused a stream curl could fetch", () => {
+  const msg = describeMediaFailure(STREAM, 4, { status: 0, stdout: "200", stderr: "" });
+  assert.match(msg, /reaches the stream/);
+  assert.match(msg, /media error 4/);
+  assert.match(msg, new RegExp(STREAM.replace(/[.]/g, "\\.")));
+});
+
+test("describeMediaFailure falls back to the bare error when curl didn't run", () => {
+  const msg = describeMediaFailure(STREAM, 4, null);
+  assert.match(msg, /media error 4/);
+  assert.match(msg, /192\.168\.1\.2:5000/);
+});
+
+test("describeMediaFailure copes with an unknown error code and empty stderr", () => {
+  const msg = describeMediaFailure(STREAM, undefined, { status: 28, stdout: "000", stderr: "" });
+  assert.match(msg, /can't reach its own stream/);
+  assert.match(msg, /curl exit 28/);
 });
