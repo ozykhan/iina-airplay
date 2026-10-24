@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure } = require("../main.js");
+const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure, videoRangeHint } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -268,4 +268,15 @@ test("describeMediaFailure copes with an unknown error code and empty stderr", (
   const msg = describeMediaFailure(STREAM, undefined, { status: 28, stdout: "000", stderr: "" });
   assert.match(msg, /can't reach its own stream/);
   assert.match(msg, /curl exit 28/);
+});
+
+test("videoRangeHint maps mpv's HDR transfers to VIDEO-RANGE values", () => {
+  assert.equal(videoRangeHint("pq"), "PQ");
+  assert.equal(videoRangeHint("hlg"), "HLG");
+});
+
+test("videoRangeHint is empty for SDR, unknown and missing transfers", () => {
+  for (const g of ["bt.1886", "srgb", "auto", "", null, undefined, 3]) {
+    assert.equal(videoRangeHint(g), "", String(g));
+  }
 });

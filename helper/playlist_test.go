@@ -120,3 +120,46 @@ func TestEstimateBandwidth(t *testing.T) {
 		}
 	}
 }
+
+func TestAddVariantAttrsAddsCodecsAndRange(t *testing.T) {
+	in := "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES=\"subs\"\nindex.m3u8\n"
+	out := AddVariantAttrs(in, VariantInfo{Codecs: "hvc1.2.4.L150.B0,ec-3", VideoRange: "PQ", FrameRate: "23.976"})
+	want := "#EXT-X-STREAM-INF:BANDWIDTH=5000000,SUBTITLES=\"subs\",CODECS=\"hvc1.2.4.L150.B0,ec-3\",VIDEO-RANGE=PQ,FRAME-RATE=23.976\n"
+	if !strings.Contains(out, want) {
+		t.Fatalf("attrs not added:\n%s", out)
+	}
+	if !strings.HasPrefix(out, "#EXTM3U\n") || !strings.HasSuffix(out, "\nindex.m3u8\n") {
+		t.Fatalf("other lines disturbed:\n%s", out)
+	}
+}
+
+// ffmpeg's end-of-job variant line already names H.264 + AAC; what it wrote
+// stays, and only the missing attribute is added.
+func TestAddVariantAttrsKeepsFfmpegCodecs(t *testing.T) {
+	out := AddVariantAttrs(ffmpegMaster, VariantInfo{Codecs: "avc1.640028,mp4a.40.2", VideoRange: "HLG"})
+	if strings.Count(out, "CODECS=") != 1 || !strings.Contains(out, `CODECS="hvc1.2.4.L120.b0,mp4a.40.2"`) {
+		t.Fatalf("existing CODECS must be kept, not replaced or duplicated:\n%s", out)
+	}
+	if !strings.Contains(out, "VIDEO-RANGE=HLG") {
+		t.Fatalf("missing VIDEO-RANGE not added:\n%s", out)
+	}
+}
+
+func TestAddVariantAttrsKeepsExistingRange(t *testing.T) {
+	in := "#EXT-X-STREAM-INF:BANDWIDTH=1,VIDEO-RANGE=SDR,FRAME-RATE=25.000\nindex.m3u8\n"
+	if got := AddVariantAttrs(in, VariantInfo{VideoRange: "PQ", FrameRate: "24.000"}); got != in {
+		t.Fatalf("an existing VIDEO-RANGE and FRAME-RATE must pass through:\n%s", got)
+	}
+}
+
+func TestAddVariantAttrsNothingToAdd(t *testing.T) {
+	for _, in := range []string{ffmpegMaster, ffmpegMasterNoVariant} {
+		if got := AddVariantAttrs(in, VariantInfo{}); got != in {
+			t.Fatalf("no attrs must mean no change:\n%s", got)
+		}
+	}
+	// No variant line at all: nothing to attach the attributes to.
+	if got := AddVariantAttrs(ffmpegMasterNoVariant, VariantInfo{Codecs: "avc1.640028", VideoRange: "PQ"}); got != ffmpegMasterNoVariant {
+		t.Fatalf("a master without a variant must pass through:\n%s", got)
+	}
+}

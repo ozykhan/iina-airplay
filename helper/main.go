@@ -44,7 +44,7 @@ func runServe(argv []string) {
 	fs := flag.NewFlagSet("serve", flag.ExitOnError)
 	var c JobConfig
 	var parent int
-	var ipOverride string
+	var ipOverride, rangeHint string
 	fs.StringVar(&c.Source, "source", "", "media file")
 	fs.StringVar(&c.OutDir, "out", "", "HLS output dir")
 	fs.StringVar(&c.FFmpeg, "ffmpeg", "", "ffmpeg binary")
@@ -60,6 +60,7 @@ func runServe(argv []string) {
 	fs.StringVar(&c.SubPath, "subpath", "", "external subtitle file (used as input 1; overrides -smap)")
 	fs.StringVar(&c.SubLang, "sublang", "", "subtitle language tag for the HLS rendition")
 	fs.StringVar(&c.SubName, "subname", "", "subtitle display name for the HLS rendition")
+	fs.StringVar(&rangeHint, "vrange", "", "PQ or HLG when the player decodes an HDR transfer; used for the master's VIDEO-RANGE when init.mp4 has no colr box")
 	fs.Parse(argv)
 
 	// pidfile is set once -out is known to be non-empty (right after the
@@ -113,7 +114,7 @@ func runServe(argv []string) {
 	if fi, serr := os.Stat(c.Source); serr == nil {
 		srcSize = fi.Size()
 	}
-	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, EstimateBandwidth(srcSize, c.Duration))
+	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, EstimateBandwidth(srcSize, c.Duration), rangeHint)
 	if err != nil {
 		fail(err.Error())
 	}

@@ -44,6 +44,36 @@ func EnsureVariant(content string, bandwidth int) string {
 	return strings.TrimRight(content, "\n") + "\n" + inf + "\nindex.m3u8\n"
 }
 
+// AddVariantAttrs adds CODECS, VIDEO-RANGE and FRAME-RATE to the master's
+// variant line (ffmpeg's, or the one EnsureVariant synthesized) when they are
+// missing; an empty field adds nothing. Whatever ffmpeg already wrote is
+// kept: its end-of-job line names H.264 + AAC itself. Values come from
+// VariantAttrs.
+func AddVariantAttrs(content string, v VariantInfo) string {
+	if v == (VariantInfo{}) {
+		return content
+	}
+	lines := strings.Split(content, "\n")
+	for i, line := range lines {
+		rest, ok := strings.CutPrefix(line, "#EXT-X-STREAM-INF:")
+		if !ok {
+			continue
+		}
+		attrs := splitAttrs(rest)
+		if v.Codecs != "" {
+			attrs = addAttr(attrs, "CODECS", quoteAttr(v.Codecs))
+		}
+		if v.VideoRange != "" {
+			attrs = addAttr(attrs, "VIDEO-RANGE", v.VideoRange)
+		}
+		if v.FrameRate != "" {
+			attrs = addAttr(attrs, "FRAME-RATE", v.FrameRate)
+		}
+		lines[i] = "#EXT-X-STREAM-INF:" + strings.Join(attrs, ",")
+	}
+	return strings.Join(lines, "\n")
+}
+
 // RewriteMasterPlaylist fixes up the subtitle rendition line of an
 // ffmpeg-written HLS master playlist. Older ffmpeg hardcodes DEFAULT=NO on
 // the subtitle rendition; every version emits a generic NAME and no
@@ -95,6 +125,17 @@ func setAttr(attrs []string, key, val string) []string {
 	for i, a := range attrs {
 		if strings.HasPrefix(a, key+"=") {
 			attrs[i] = key + "=" + val
+			return attrs
+		}
+	}
+	return append(attrs, key+"="+val)
+}
+
+// addAttr appends key=val unless the list already has key; unlike setAttr
+// it never overwrites.
+func addAttr(attrs []string, key, val string) []string {
+	for _, a := range attrs {
+		if strings.HasPrefix(a, key+"=") {
 			return attrs
 		}
 	}

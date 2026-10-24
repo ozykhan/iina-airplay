@@ -15,7 +15,7 @@ func TestServerMIMEAndRange(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "index.m3u8"), []byte("#EXTM3U\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.m4s"), []byte("0123456789"), 0o644)
 
-	port, shutdown, err := StartServer(dir, "", "", 0)
+	port, shutdown, err := StartServer(dir, "", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -54,7 +54,7 @@ func TestServerRewritesMasterPlaylist(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(master), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.vtt"), []byte("WEBVTT\n"), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en", 0)
+	port, shutdown, err := StartServer(dir, "English", "en", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -87,7 +87,7 @@ func TestServerRewritesMasterPlaylist(t *testing.T) {
 
 func TestServerMissingMasterFallsThrough(t *testing.T) {
 	dir := t.TempDir()
-	port, shutdown, err := StartServer(dir, "", "", 0)
+	port, shutdown, err := StartServer(dir, "", "", 0, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -110,7 +110,7 @@ func TestServerAddsVariantToIncompleteMaster(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(ffmpegMasterNoVariant), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000)
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "")
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -129,4 +129,60 @@ func TestServerAddsVariantToIncompleteMaster(t *testing.T) {
 	if !strings.Contains(s, `NAME="English"`) {
 		t.Fatalf("subtitle rewrite must still apply:\n%s", s)
 	}
+}
+
+// Issue #45: ffmpeg's master names no codecs, video range or frame rate. An
+// HDR variant without VIDEO-RANGE is SDR by definition and without
+// FRAME-RATE AVFoundation rejects it; the served master takes all three from
+// the segments ffmpeg wrote.
+func TestServerAddsCodecsAndVideoRangeFromInitSegment(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(ffmpegMasterNoVariant), 0o644)
+	os.WriteFile(filepath.Join(dir, "init.mp4"), hdrInit(0, 24000, 0), 0o644)
+	os.WriteFile(filepath.Join(dir, "seg_0000.m4s"), mediaSegment(traf(tfhd(1, 1001), trunDurations(1001, 1001))), 0o644)
+
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdown()
+
+	s := getBody(t, fmt.Sprintf("http://127.0.0.1:%d/master.m3u8", port))
+	want := `#EXT-X-STREAM-INF:BANDWIDTH=7000000,SUBTITLES="subs",CODECS="hvc1.2.4.L150.B0,ec-3",VIDEO-RANGE=PQ,FRAME-RATE=23.976` + "\nindex.m3u8\n"
+	if !strings.Contains(s, want) {
+		t.Fatalf("served master lacks codecs/range:\n%s", s)
+	}
+}
+
+// A source that tags PQ only in the bitstream gets no colr box from ffmpeg;
+// the plugin's hint (mpv's decoded transfer) fills in.
+func TestServerUsesRangeHintWithoutColr(t *testing.T) {
+	dir := t.TempDir()
+	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(ffmpegMasterNoVariant), 0o644)
+	os.WriteFile(filepath.Join(dir, "init.mp4"), initSegment(
+		trak("vide", visualEntry("hvc1", hvcC(0, 0, 2, 0x20000000, constraintB0, 150))),
+		trak("soun", audioEntry("ec-3", 0)),
+	), 0o644)
+
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "PQ")
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer shutdown()
+
+	s := getBody(t, fmt.Sprintf("http://127.0.0.1:%d/master.m3u8", port))
+	if !strings.Contains(s, `CODECS="hvc1.2.4.L150.B0,ec-3",VIDEO-RANGE=PQ`) {
+		t.Fatalf("hint not applied:\n%s", s)
+	}
+}
+
+func getBody(t *testing.T, url string) string {
+	t.Helper()
+	resp, err := http.Get(url)
+	if err != nil {
+		t.Fatal(err)
+	}
+	defer resp.Body.Close()
+	b, _ := io.ReadAll(resp.Body)
+	return string(b)
 }

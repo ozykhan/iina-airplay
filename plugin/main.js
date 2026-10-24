@@ -119,6 +119,18 @@ function lanIPOverride(value) {
   return typeof value === "string" ? value.trim() : "";
 }
 
+// mpv's video-params/gamma names the transfer function of the decoded
+// stream ("pq", "hlg", "bt.1886", ...). The helper takes VIDEO-RANGE from the
+// colr box ffmpeg writes into init.mp4, but ffmpeg writes none when the
+// source tags its HDR transfer only in the bitstream, and a variant without
+// VIDEO-RANGE is SDR, which AVFoundation fails for an HDR10 stream (issue
+// #45). This is the fallback for that case; "" means SDR or unknown.
+function videoRangeHint(gamma) {
+  if (gamma === "pq") return "PQ";
+  if (gamma === "hlg") return "HLG";
+  return "";
+}
+
 // WebKit reports a stream it couldn't fetch at all (refused, unreachable,
 // 404) as media error 4 with an empty MediaError.message, which is all a user
 // or a bug report ever saw (issue #42). The plugin probes the URL with curl,
@@ -237,6 +249,7 @@ if (typeof module !== "undefined") {
     normalizeSource: normalizeSource,
     lanIPOverride: lanIPOverride,
     describeMediaFailure: describeMediaFailure,
+    videoRangeHint: videoRangeHint,
     newMirror: newMirror,
     mirrorOnMpvPause: mirrorOnMpvPause,
     mirrorOnMpvSeek: mirrorOnMpvSeek,
@@ -426,6 +439,7 @@ if (typeof iina !== "undefined") {
     // the serve args are built inside resolveBinDir's callback, which runs
     // from a utils.exec promise, and nothing IINA-facing is called from there.
     var lanIP = lanIPOverride(preferences.get("lanIP"));
+    var vrange = videoRangeHint(mpv.getString("video-params/gamma"));
     var duration = mpv.getNumber("duration") || 0;
     var outDir = utils.resolvePath("@tmp/hls");
     var gen = ++castGen;
@@ -460,6 +474,7 @@ if (typeof iina !== "undefined") {
         serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
       }
       if (lanIP) serveArgs.push("-ip", lanIP);
+      if (vrange) serveArgs.push("-vrange", vrange);
       utils.exec(helper, serveArgs, undefined, function (chunk) {
         if (gen !== castGen) return;
         var parsed = parseHelperEvents(stdoutRest, chunk);

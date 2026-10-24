@@ -72,6 +72,19 @@ URL. Only the final "the TV picked it up and played it" step needs the device.
 Say so in your PR if you couldn't test that last step. It's an expected gap, not
 a problem — it just tells the maintainer what to check before merging.
 
+The Mac's own AVFoundation is the nearest stand-in for the TV: Safari, or any
+`AVPlayer`, plays the helper's URL through the same HLS stack. When it rejects
+a master playlist, the error code alone says little, but CoreMedia logs the
+reason. Run this while the URL loads:
+
+```bash
+/usr/bin/log stream --style compact --predicate 'subsystem == "com.apple.coremedia" AND eventMessage CONTAINS "StreamPlaylist"'
+```
+
+That is how issue #45 was found: `HDR alternate is missing FRAME-RATE`. Call
+`/usr/bin/log` by its full path, because zsh has a `log` builtin that shadows
+it.
+
 ## Layout
 
 | Path | What lives there |
