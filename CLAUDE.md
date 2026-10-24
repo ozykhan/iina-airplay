@@ -52,6 +52,18 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
 - **Apple TV 4K accepts** H.264 and HEVC (Main / Main 10) in MP4/M4V/MOV/HLS,
   Dolby Vision Profile 5, HDR10 / HDR10+ / HLG; audio AAC, AC-3, E-AC-3, Atmos,
   ALAC, FLAC. Not MKV, not DTS/DTS-HD, not TrueHD, not PGS subtitles.
+- **ffmpeg's HLS master playlist is not enough for HDR.** hlsenc writes
+  `CODECS` only for H.264 and never `VIDEO-RANGE` or `FRAME-RATE`. A variant
+  without `VIDEO-RANGE` is SDR, and AVFoundation fails an HDR10 stream in one
+  (-12927). It also rejects an HDR variant without `FRAME-RATE` (-12642,
+  `HDR alternate is missing FRAME-RATE`). Subtitled casts are the ones handed
+  the master, so those were the HDR casts that failed (issue #45). The helper
+  now adds all three when serving `master.m3u8`, from `init.mp4` and the first
+  segment. ffmpeg writes a `colr` box into `init.mp4` only when the source
+  container tags the transfer, so the plugin passes mpv's `video-params/gamma`
+  as a fallback. Verified on macOS AVFoundation, which also played HLG in an
+  SDR variant; tvOS itself is untested. CoreMedia logs why it rejects a
+  master (CONTRIBUTING.md, "What you cannot test without hardware").
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
 - **Install and update are two different mechanisms**, and satisfying one does
   not satisfy the other. Installing — by slug, or from the 1.5 store, which

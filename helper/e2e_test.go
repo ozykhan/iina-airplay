@@ -5,10 +5,13 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"math"
 	"net/http"
 	"os"
 	"os/exec"
 	"path/filepath"
+	"regexp"
+	"strconv"
 	"strings"
 	"testing"
 	"time"
@@ -48,15 +51,15 @@ func locateSystemFFmpeg(candidates []string, stat func(string) error, gateReques
 	if gateRequested {
 		return "", false, "IINA_AIRPLAY_FFMPEG requested a bundled-ffmpeg gate run, but no full-featured system ffmpeg was found to author test fixtures (checked: " +
 			strings.Join(candidates, ", ") +
-			"). Fixtures need libx264, flac, srt and the matroska muxer, which the bundled build deliberately excludes — install Homebrew's ffmpeg (`brew install ffmpeg`) to run the gate."
+			"). Fixtures need libx264, libx265, flac, srt and the matroska muxer, which the bundled build deliberately excludes — install Homebrew's ffmpeg (`brew install ffmpeg`) to run the gate."
 	}
 	return "", true, ""
 }
 
 // findSystemFFmpeg returns a full-featured ffmpeg for authoring test fixtures
 // — never the binary under test, findFFmpeg's job. Fixtures need libx264,
-// flac, srt and the matroska muxer — exactly what the bundled LGPL build
-// excludes — so this deliberately stays on Homebrew's ffmpeg regardless of
+// libx265, flac, srt and the matroska muxer — exactly what the bundled LGPL
+// build excludes — so this deliberately stays on Homebrew's ffmpeg regardless of
 // IINA_AIRPLAY_FFMPEG. When that variable is set, a gate run against the
 // bundled build was explicitly requested, so a missing system ffmpeg here is
 // a hard failure rather than a skip: skipping would let `go test` exit 0
@@ -272,6 +275,143 @@ func TestRealFFmpegSubtitledEndToEnd(t *testing.T) {
 	resp3.Body.Close()
 	if !strings.Contains(string(body3), "hello from iina-airplay") {
 		t.Fatalf("cue text missing from first vtt segment:\n%s", body3)
+	}
+}
+
+// Synthesizes HEVC Main 10 tagged BT.2020 with the given transfer (HDR10's
+// smpte2084, or arib-std-b67 for HLG) + E-AC-3 + an embedded SRT track
+// (streams 0/1/2). setparams tags the frames, so the transfer reaches both
+// the bitstream and the container, as in a real HDR release; -color_trc
+// alone no longer does on ffmpeg 9.
+func makeHDRFixture(t *testing.T, ffmpeg, trc string, rate int) string {
+	t.Helper()
+	dir := t.TempDir()
+	srt := filepath.Join(dir, "subs.srt")
+	os.WriteFile(srt, []byte("1\n00:00:01,000 --> 00:00:03,000\nhello from iina-airplay\n"), 0o644)
+	p := filepath.Join(dir, "fixture-hdr.mkv")
+	cmd := exec.Command(ffmpeg, "-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", fmt.Sprintf("testsrc2=duration=8:size=640x360:rate=%d", rate),
+		"-f", "lavfi", "-i", "sine=frequency=440:duration=8",
+		"-i", srt,
+		"-map", "0:v", "-map", "1:a", "-map", "2:s",
+		"-vf", "setparams=color_primaries=bt2020:color_trc="+trc+":colorspace=bt2020nc,format=yuv420p10le",
+		"-c:v", "libx265", "-preset", "ultrafast", "-x265-params", "log-level=error",
+		"-c:a", "eac3", "-c:s", "srt", p)
+	if out, err := cmd.CombinedOutput(); err != nil {
+		t.Fatalf("hdr fixture: %v\n%s", err, out)
+	}
+	return p
+}
+
+func streamInf(master string) string {
+	for _, line := range strings.Split(master, "\n") {
+		if strings.HasPrefix(line, "#EXT-X-STREAM-INF:") {
+			return line
+		}
+	}
+	return ""
+}
+
+// Issue #45: an HDR file cast with subtitles is handed to the TV as
+// master.m3u8, and ffmpeg's master announces neither codecs, video range nor
+// frame rate, so AVFoundation fails the variant. The served master must
+// carry all three. This 8 s fixture finishes packaging before the fetch, so
+// it checks ffmpeg's end-of-job variant line; the mid-packaging line is
+// TestServerAddsCodecsAndVideoRangeFromInitSegment's. 25 fps in a 16000
+// timescale gives equal frame durations; 24 fps the uneven 666/667 ones.
+func TestRealFFmpegHDRSubtitledEndToEnd(t *testing.T) {
+	for _, c := range []struct {
+		name, trc, videoRange string
+		rate                  int
+	}{
+		{"HDR10 25fps", "smpte2084", "PQ", 25},
+		{"HLG 24fps", "arib-std-b67", "HLG", 24},
+	} {
+		t.Run(c.name, func(t *testing.T) {
+			ffmpeg := findFFmpeg(t)
+			fixture := makeHDRFixture(t, findSystemFFmpeg(t), c.trc, c.rate)
+			bin := buildHelper(t)
+			out := t.TempDir()
+
+			cmd := exec.Command(bin, "serve",
+				"-source", fixture, "-out", out, "-ffmpeg", ffmpeg,
+				"-parent", fmt.Sprint(os.Getpid()), "-duration", "8",
+				"-vcodec", "hevc", "-acodec", "eac3", "-achannels", "1", "-vmap", "0", "-amap", "1",
+				"-smap", "2", "-sublang", "en", "-subname", "English")
+			stdout, _ := cmd.StdoutPipe()
+			if err := cmd.Start(); err != nil {
+				t.Fatal(err)
+			}
+			defer func() { cmd.Process.Kill(); cmd.Wait() }()
+
+			url := waitReady(t, stdout, 60*time.Second)
+			inf := streamInf(getBody(t, url))
+			if !strings.Contains(inf, "VIDEO-RANGE="+c.videoRange) {
+				t.Fatalf("variant not announced as %s: %q", c.videoRange, inf)
+			}
+			m := regexp.MustCompile(`FRAME-RATE=(\d+\.\d{3})(,|$)`).FindStringSubmatch(inf)
+			if m == nil {
+				t.Fatalf("variant has no FRAME-RATE: %q", inf)
+			}
+			// An average over millisecond-rounded timestamps: close, not exact.
+			if fps, _ := strconv.ParseFloat(m[1], 64); math.Abs(fps-float64(c.rate)) > 0.05 {
+				t.Fatalf("FRAME-RATE %s for a %d fps source: %q", m[1], c.rate, inf)
+			}
+			t.Logf("served variant: %s", inf)
+			if !regexp.MustCompile(`CODECS="hvc1\.2\.4\.L\d+(\.[0-9A-F]+)*,ec-3"`).MatchString(inf) {
+				t.Fatalf("variant CODECS wrong for HEVC Main 10 + E-AC-3: %q", inf)
+			}
+		})
+	}
+}
+
+// The plugin's -vrange hint reaches the served master when init.mp4 has no
+// colr box to say otherwise (this fixture's source carries no colour tags).
+func TestRealFFmpegRangeHintReachesMaster(t *testing.T) {
+	ffmpeg := findFFmpeg(t)
+	fixture := makeSubbedFixture(t, findSystemFFmpeg(t))
+	bin := buildHelper(t)
+	out := t.TempDir()
+
+	cmd := exec.Command(bin, "serve",
+		"-source", fixture, "-out", out, "-ffmpeg", ffmpeg,
+		"-parent", fmt.Sprint(os.Getpid()), "-duration", "8",
+		"-vcodec", "h264", "-acodec", "aac", "-achannels", "2", "-vmap", "0", "-amap", "1",
+		"-smap", "2", "-vrange", "HLG")
+	stdout, _ := cmd.StdoutPipe()
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+
+	url := waitReady(t, stdout, 60*time.Second)
+	if inf := streamInf(getBody(t, url)); !strings.Contains(inf, "VIDEO-RANGE=HLG") {
+		t.Fatalf("-vrange hint not applied: %q", inf)
+	}
+}
+
+// ffmpeg's hlsenc names H.264 + AAC itself once packaging ends, which makes
+// it an oracle for the init.mp4 parser: on the same output, the CODECS the
+// helper derives must be exactly the CODECS ffmpeg wrote.
+func TestInitSegmentCodecsMatchFfmpegOwn(t *testing.T) {
+	ffmpeg := findFFmpeg(t)
+	fixture := makeSubbedFixture(t, findSystemFFmpeg(t))
+	out := t.TempDir()
+	args := BuildArgs(JobConfig{Source: fixture, OutDir: out, VCodec: "h264", ACodec: "aac",
+		AChannels: 2, VMap: 0, AMap: 1, SubMap: "2"})
+	if b, err := exec.Command(ffmpeg, args...).CombinedOutput(); err != nil {
+		t.Fatalf("ffmpeg: %v\n%s", err, b)
+	}
+	raw, err := os.ReadFile(filepath.Join(out, "master.m3u8"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	m := regexp.MustCompile(`CODECS="([^"]+)"`).FindStringSubmatch(streamInf(string(raw)))
+	if m == nil {
+		t.Fatalf("ffmpeg wrote no CODECS to compare against:\n%s", raw)
+	}
+	if got := VariantAttrs(out, "").Codecs; got != m[1] {
+		t.Fatalf("derived CODECS %q, ffmpeg wrote %q", got, m[1])
 	}
 }
 

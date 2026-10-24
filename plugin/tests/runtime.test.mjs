@@ -34,7 +34,9 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
     mpv: {
-      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv") : null),
+      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv")
+                       : k === "video-params/gamma" ? (opts.gamma !== undefined ? opts.gamma : "bt.1886")
+                       : null),
       getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120
                        : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
       getNative: () => trackList,
@@ -450,6 +452,31 @@ test("subtitle label is available before any cast starts", () => {
 });
 
 // Issue #33: the "LAN address" preference reaches the helper as `serve -ip`.
+// Issue #45: ffmpeg writes no colr box for a source that tags its HDR
+// transfer only in the bitstream, so the helper needs mpv's reading of the
+// decoded stream to announce the variant as HDR.
+test("serve args carry -vrange PQ when mpv decodes a PQ transfer", () => {
+  const p = loadPlugin({ gamma: "pq" });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(args[args.indexOf("-vrange") + 1], "PQ");
+});
+
+test("serve args carry -vrange HLG when mpv decodes an HLG transfer", () => {
+  const p = loadPlugin({ gamma: "hlg" });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(args[args.indexOf("-vrange") + 1], "HLG");
+});
+
+test("serve args carry no -vrange for SDR or an unknown transfer", () => {
+  for (const gamma of ["bt.1886", "auto", null]) {
+    const p = loadPlugin({ gamma });
+    p.clickMenu();
+    assert.equal(serves(p)[0].args.indexOf("-vrange"), -1, `gamma ${gamma}`);
+  }
+});
+
 test("serve args carry no -ip when the LAN address setting is empty", () => {
   const p = loadPlugin();
   p.clickMenu();
