@@ -163,8 +163,11 @@ function describeMediaFailure(url, code, probe) {
 
 var DRIFT_TOLERANCE = 1.5; // seconds of mpv/TV divergence tolerated before correcting
 var ECHO_WINDOW_MS = 2000; // how long our own time-pos set may echo back as an mpv seek event
+var RATE_WINDOW_S = 10;    // seconds of TV playback measured before judging whether it follows the speed
+var RATE_SLACK = 0.05;     // how close to 1x the measured TV rate must be to count as ignoring the speed
+var RATE_JUMP_S = 2;       // position change between two polls beyond playback: a seek, not a rate
 
-function newMirror(startPos, savedMute, paused) {
+function newMirror(startPos, savedMute, paused, rate) {
   return {
     seq: 0,               // last issued command sequence number
     paused: paused,       // desired TV pause state (follows mpv)
@@ -173,6 +176,10 @@ function newMirror(startPos, savedMute, paused) {
     savedMute: savedMute, // mpv mute flag to restore on teardown
     expectMpvPause: null, // swallow the next pause.changed that echoes our own mpv.set
     lastSetPos: null,     // {pos, at} of our last programmatic time-pos set (echo suppression)
+    rate: rate > 0 ? rate : 1, // desired TV playback rate (follows mpv speed)
+    expectMpvSpeed: null, // swallow the next speed.changed that echoes our own mpv.set
+    ignoredRate: null,    // a speed the TV played at 1x instead; restored to mpv on teardown
+    rateProbe: null,      // {pos, at, dpos, dt}: TV playback measured so far at `rate`
   };
 }
 
@@ -210,6 +217,39 @@ function mirrorOnMpvSeek(m, mpvPos, now) {
   return n;
 }
 
+// mpv's speed changed (issue #48). The page applies the rate on every poll
+// rather than through seq, so a speed change never holds back pause and
+// drift reconciliation. A new speed supersedes one the TV ignored: stopping
+// the cast must not undo it.
+function mirrorOnMpvSpeed(m, speed) {
+  var n = Object.assign({}, m);
+  var expected = m.expectMpvSpeed;
+  n.expectMpvSpeed = null;
+  if (expected !== null && Math.abs(speed - expected) < 1e-6) return n;
+  if (Math.abs(speed - m.rate) >= 1e-6) {
+    n.rate = speed;
+    n.ignoredRate = null;
+    n.rateProbe = null;
+  }
+  return n;
+}
+
+// One poll of TV playback into the rate measurement. tvState.at is the
+// page's clock when it read the position. Only position changes that could be
+// playback count: a jump (a TV-remote skip, a resync) says nothing about the
+// rate. A poll where the position did not move is kept, since the TV's
+// position may only update every second or so.
+function stepRateProbe(p, tvState, rate) {
+  if (p === null) return { pos: tvState.pos, at: tvState.at, dpos: 0, dt: 0 };
+  var q = { pos: tvState.pos, at: tvState.at, dpos: p.dpos, dt: p.dt };
+  var dt = (tvState.at - p.at) / 1000, dpos = tvState.pos - p.pos;
+  if (dt > 0 && dpos > -RATE_JUMP_S && dpos < dt * Math.max(rate, 1) + RATE_JUMP_S) {
+    q.dpos += dpos;
+    q.dt += dt;
+  }
+  return q;
+}
+
 // The page reported TV state. Decides what (if anything) to push into mpv.
 // While commands are in flight (appliedSeq < seq) the TV state is stale, so
 // nothing is reconciled against it — not even drift. ended only tears the
@@ -218,14 +258,25 @@ function mirrorOnMpvSeek(m, mpvPos, now) {
 // kill the cast. An acked seekTo is cleared as soon as it's acked, even
 // before wireless playback starts, so a pre-wireless user seek doesn't leave
 // a stale command sitting in the sync block.
+//
+// Speed (issue #48): AirPlay receivers are only reliable at rate 0 and 1, and
+// some play at 1x whatever they are asked. The page's playbackRate reads back
+// what was requested either way, so the rate is measured from the TV's
+// position over RATE_WINDOW_S of playback. A TV found at 1x sets the clock,
+// as it does for position: mpv drops to 1x and keeps the speed asked for in
+// ignoredRate, instead of being dragged back every few seconds by drift
+// correction.
 function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
-  var out = { m: m, setMpvPos: null, setMpvPaused: null, teardown: false };
+  var out = { m: m, setMpvPos: null, setMpvPaused: null, setMpvSpeed: null, teardown: false };
   if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
   var n = Object.assign({}, m);
   var acked = tvState.appliedSeq >= m.seq;
   if (acked) n.seekTo = null;
   out.m = n;
-  if (!tvState.wireless || !acked) return out; // nothing on the TV yet, or a command is in flight: no clock to follow
+  if (!tvState.wireless || !acked) {      // nothing on the TV yet, or a command is in flight: no clock to follow
+    n.rateProbe = null;
+    return out;
+  }
   if (tvState.paused !== n.paused) {      // TV-remote initiated: mirror into mpv
     n.paused = tvState.paused;
     n.expectMpvPause = tvState.paused;
@@ -234,6 +285,19 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
   if (Math.abs(mpvPos - tvState.pos) > DRIFT_TOLERANCE) {
     out.setMpvPos = tvState.pos;
     n.lastSetPos = { pos: tvState.pos, at: now };
+  }
+  var measuring = n.rate !== 1 && !tvState.paused && !tvState.seeking &&
+                  typeof tvState.at === "number" && Math.abs(tvState.rate - n.rate) < 1e-6;
+  n.rateProbe = measuring ? stepRateProbe(n.rateProbe, tvState, n.rate) : null;
+  if (n.rateProbe !== null && n.rateProbe.dt >= RATE_WINDOW_S) {
+    var measured = n.rateProbe.dpos / n.rateProbe.dt;
+    n.rateProbe = null;                   // judge each window afresh
+    if (Math.abs(measured - 1) <= Math.min(RATE_SLACK, Math.abs(n.rate - 1) / 3)) {
+      n.ignoredRate = n.rate;
+      n.rate = 1;
+      n.expectMpvSpeed = 1;
+      out.setMpvSpeed = 1;
+    }
   }
   return out;
 }
@@ -253,9 +317,11 @@ if (typeof module !== "undefined") {
     newMirror: newMirror,
     mirrorOnMpvPause: mirrorOnMpvPause,
     mirrorOnMpvSeek: mirrorOnMpvSeek,
+    mirrorOnMpvSpeed: mirrorOnMpvSpeed,
     mirrorOnTvState: mirrorOnTvState,
     DRIFT_TOLERANCE: DRIFT_TOLERANCE,
     ECHO_WINDOW_MS: ECHO_WINDOW_MS,
+    RATE_WINDOW_S: RATE_WINDOW_S,
   };
 }
 
@@ -298,6 +364,7 @@ if (typeof iina !== "undefined") {
       sync: mirror === null ? null : {
         seq: mirror.seq, paused: mirror.paused,
         seekTo: mirror.seekTo, startPos: mirror.startPos,
+        rate: mirror.rate, ignoredRate: mirror.ignoredRate,
       },
     };
   }
@@ -305,6 +372,8 @@ if (typeof iina !== "undefined") {
   function endMirror() {
     if (mirror === null) return;
     mpv.set("mute", mirror.savedMute);
+    // The TV held mpv at 1x; with the cast over, the user's speed is theirs again.
+    if (mirror.ignoredRate !== null) mpv.set("speed", mirror.ignoredRate);
     mirror = null;
   }
 
@@ -318,6 +387,10 @@ if (typeof iina !== "undefined") {
   event.on("mpv.pause.changed", function () {
     if (mirror === null) return;
     mirror = mirrorOnMpvPause(mirror, !!mpv.getFlag("pause"));
+  });
+  event.on("mpv.speed.changed", function () {
+    if (mirror === null) return;
+    mirror = mirrorOnMpvSpeed(mirror, mpv.getNumber("speed") || 1);
   });
   event.on("mpv.seek", function () {
     if (mirror === null) return;
@@ -447,7 +520,8 @@ if (typeof iina !== "undefined") {
     state = { phase: "starting", url: null, pct: 0, msg: null };
     // Muted mirror: keep mpv playing, silenced, instead of pausing. The page
     // will best-effort seek the TV to startPos once wireless playback begins.
-    mirror = newMirror(mpv.getNumber("time-pos") || 0, !!mpv.getFlag("mute"), !!mpv.getFlag("pause"));
+    mirror = newMirror(mpv.getNumber("time-pos") || 0, !!mpv.getFlag("mute"), !!mpv.getFlag("pause"),
+                       mpv.getNumber("speed"));
     mpv.set("mute", true);
 
     resolveBinDir(function (binDir, resolveErr) {
@@ -584,6 +658,10 @@ if (typeof iina !== "undefined") {
       if (r.teardown) { stopCast(); return; }
       if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
       if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);
+      if (r.setMpvSpeed !== null) {
+        mpv.set("speed", r.setMpvSpeed);
+        core.osd("AirPlay: this TV only plays at normal speed");
+      }
     });
     sidebarLoaded = true;
   }
