@@ -16,7 +16,8 @@ function loadPlugin(opts = {}) {
   const messages = {};       // name -> handler registered via sidebar.onMessage
   const posted = [];         // [name, payload] sent to the page
   const osd = [];
-  const flags = { pause: false, mute: opts.mute || false };
+  const flags = { pause: false, mute: opts.mute || false,
+                  speed: opts.speed !== undefined ? opts.speed : 1 };
   const sets = [];           // [name, value] pushed by mpv.set
   const events = {};         // event name -> callback registered via event.on
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
@@ -38,7 +39,8 @@ function loadPlugin(opts = {}) {
                        : k === "video-params/gamma" ? (opts.gamma !== undefined ? opts.gamma : "bt.1886")
                        : null),
       getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120
-                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
+                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42)
+                       : k === "speed" ? flags.speed : 0),
       getNative: () => trackList,
       getFlag: (k) => !!flags[k],
       set: (k, v) => { sets.push([k, v]); flags[k] = v; },
@@ -302,9 +304,45 @@ test("state posts carry the sync block while casting, null when idle", () => {
   p.clickMenu();
   p.send("getState", {});
   assert.deepEqual(p.state().sync,
-    { seq: 0, paused: false, seekTo: null, startPos: 42 });
+    { seq: 0, paused: false, seekTo: null, startPos: 42, rate: 1, ignoredRate: null });
   p.send("stop", {});
   assert.equal(p.state().sync, null);
+});
+
+// ---- playback speed (issue #48) ----
+
+test("a cast asks the TV for mpv's current speed", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  p.send("getState", {});
+  assert.equal(p.state().sync.rate, 1.25);
+});
+
+test("an mpv speed change during a cast is passed on to the TV", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.flags.speed = 1.5;
+  p.fire("mpv.speed.changed");
+  p.send("getState", {});
+  assert.equal(p.state().sync.rate, 1.5);
+});
+
+test("a TV that ignores the speed drops mpv to 1x, says so, and stop restores it", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  // The TV plays at 1x for 11 s with the page's playbackRate at 1.25.
+  for (let ms = 0; ms <= 11000; ms += 500) {
+    p.send("tvState", { appliedSeq: 0, pos: 42 + ms / 1000, paused: false, wireless: true,
+                        ended: false, rate: 1.25, seeking: false, at: ms });
+  }
+  assert.deepEqual(p.sets.filter(([k]) => k === "speed"), [["speed", 1]]);
+  assert.ok(p.osd.some((m) => /speed/i.test(m)), "expected an OSD saying the TV ignored the speed");
+  p.fire("mpv.speed.changed");         // the echo of our own set
+  p.send("getState", {});
+  assert.equal(p.state().sync.rate, 1);
+  assert.equal(p.state().sync.ignoredRate, 1.25, "the echo must not read as a new request");
+  p.send("stop", {});
+  assert.equal(p.flags.speed, 1.25, "the user's speed comes back once the TV no longer sets the clock");
 });
 
 test("stop restores the pre-cast mute flag (false case)", () => {
