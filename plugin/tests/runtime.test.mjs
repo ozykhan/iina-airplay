@@ -390,6 +390,7 @@ test("loading a new file during a cast tears it down", () => {
   assert.equal(p.flags.mute, false);
 });
 
+
 test("file-loaded without a cast is a no-op", () => {
   const p = loadPlugin();
   p.fire("iina.file-loaded");
@@ -600,3 +601,18 @@ test("a probe that settles after the cast was stopped is dropped", async () => {
   p.send("getState");
   assert.equal(p.state().diag, null);
 });
+
+test("the syncing OSD stays up for the whole hold, and stops after it", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  const syncing = () => p.osd.filter((m) => m === "Syncing with TV…").length;
+  const tvs = { appliedSeq: 0, pos: 10, paused: false, wireless: true, ended: false };
+  p.send("tvState", { ...tvs, waiting: true });
+  p.send("tvState", { ...tvs, waiting: true });
+  assert.equal(syncing(), 2, "re-shown on every report while held");
+  p.send("tvState", { ...tvs, pos: 10.5 });
+  assert.equal(syncing(), 2, "not shown once the TV is moving");
+});
+
+
+

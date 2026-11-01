@@ -29,17 +29,20 @@ function loadPage() {
   });
   const posted = [];
   const handlers = {};
+  let poll = null;
   const context = {
     document: { getElementById: el },
     iina: {
       postMessage: (name, data) => posted.push([name, data]),
       onMessage: (name, cb) => { handlers[name] = cb; },
     },
-    setInterval: () => 0,
+    setInterval: (fn) => { poll = fn; return 0; },
+    Date,
   };
   vm.runInNewContext(script, context);
   return {
     video, posted, els,
+    poll: () => poll(),
     state: (s) => handlers.state(Object.assign(
       { pct: 0, msg: null, duration: 100, sync: null, subs: { label: "", warn: false } }, s)),
     fire: (name, ev) => listeners[name](ev || {}),
@@ -148,4 +151,57 @@ test("a diagnosis alone does not put the page in the error row", () => {
   const p = loadPage();
   p.state({ phase: "ready", url: URL_, diag: { url: URL_, msg: "old" } });
   assert.equal(p.els.headline.textContent, "Ready to send");
+});
+
+const sync = (over = {}) => ({ seq: 0, paused: false, seekTo: null, startPos: 0, ...over });
+
+test("a stream loaded while IINA is paused does not start playing", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_, sync: sync({ paused: true }) });
+  assert.equal(p.video.src, URL_);
+  assert.equal(p.video.paused, true);
+});
+
+test("commands wait until the element has the stream, then apply once", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_, sync: sync() });          // loads, readyState 0
+  p.state({ phase: "ready", url: URL_, sync: sync({ seq: 1, paused: true, seekTo: { seq: 1, pos: 300 } }) });
+  assert.equal(p.video.paused, false, "a pause mid-load could be lost on the way to the TV");
+  assert.equal(p.video.currentTime, 0);
+  p.video.readyState = 1;
+  p.state({ phase: "ready", url: URL_, sync: sync({ seq: 1, paused: true, seekTo: { seq: 1, pos: 300 } }) });
+  assert.equal(p.video.paused, true);
+  assert.equal(p.video.currentTime, 300);
+});
+
+
+test("a TV reporting playing at a frozen position is reported as waiting", () => {
+  const p = loadPage();
+  // Capture the poll so the test can drive it with a controlled clock.
+  const page = p;
+  p.state({ phase: "ready", url: URL_, sync: sync() });
+  p.video.webkitCurrentPlaybackTargetIsWireless = true;
+  p.fire("webkitcurrentplaybacktargetiswirelesschanged");
+  p.video.paused = false; p.video.currentTime = 32.35;
+  assert.ok(page.poll, "harness exposes the poll");
+  const realNow = Date.now;
+  try {
+    let t = 1000;
+    Date.now = () => t;
+    page.poll();               // first sight of 32.35
+    t += 2000; page.poll();    // unchanged for 2s
+    const tv = p.posted.filter(([n]) => n === "tvState").at(-1)[1];
+    assert.equal(tv.waiting, true);
+    p.video.currentTime = 32.9;
+    t += 500; page.poll();
+    assert.equal(p.posted.filter(([n]) => n === "tvState").at(-1)[1].waiting, false);
+    p.state({ phase: "ready", url: URL_, sync: sync() });
+    assert.equal(p.els.headline.textContent, "Playing on TV");
+    t += 2000; page.poll(); p.state({ phase: "ready", url: URL_, sync: sync() });
+    assert.equal(p.els.headline.textContent, "TV is buffering…");
+    t += 16000; page.poll(); p.state({ phase: "ready", url: URL_, sync: sync() });
+    assert.equal(p.els.headline.textContent, "TV isn't responding");
+    assert.equal(p.posted.filter(([n]) => n === "tvState").at(-1)[1].waiting, true,
+      "still held: lifting it would restart the yank-back loop");
+  } finally { Date.now = realNow; }
 });
