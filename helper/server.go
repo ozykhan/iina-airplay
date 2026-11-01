@@ -54,6 +54,13 @@ func StartServer(dir, subName, subLang string, bandwidth int, rangeHint string) 
 				return
 			}
 		}
+		if r.URL.Path == "/index.m3u8" {
+			if b, rerr := os.ReadFile(filepath.Join(dir, "index.m3u8")); rerr == nil {
+				w.Header().Set("Content-Type", "application/vnd.apple.mpegurl")
+				io.WriteString(w, AddStart(string(b)))
+				return
+			}
+		}
 		files.ServeHTTP(w, r)
 	})
 	srv := &http.Server{Handler: handler}

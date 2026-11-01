@@ -173,6 +173,7 @@ function newMirror(startPos, savedMute, paused) {
     savedMute: savedMute, // mpv mute flag to restore on teardown
     expectMpvPause: null, // swallow the next pause.changed that echoes our own mpv.set
     lastSetPos: null,     // {pos, at} of our last programmatic time-pos set (echo suppression)
+    holding: false,       // mpv paused by us while the TV catches up with a seek
   };
 }
 
@@ -212,20 +213,43 @@ function mirrorOnMpvSeek(m, mpvPos, now) {
 
 // The page reported TV state. Decides what (if anything) to push into mpv.
 // While commands are in flight (appliedSeq < seq) the TV state is stale, so
-// nothing is reconciled against it — not even drift. ended only tears the
+// nothing is reconciled against it — not even drift. The same goes while the
+// page reports `settling`: it has just issued a command (or the element is
+// mid-seek), and for a moment afterwards currentTime still reads the old
+// position and a late pause/play echo from the receiver can flip v.paused.
+// Reconciling then snapped IINA back to where it was seeked from, and turned
+// rapid pause/play into a ping-pong. ended only tears the
 // cast down once the TV is actually the one playing: a short file's LOCAL
 // (muted, hidden) playback ending before the user ever picks a TV must not
 // kill the cast. An acked seekTo is cleared as soon as it's acked, even
 // before wireless playback starts, so a pre-wireless user seek doesn't leave
 // a stale command sitting in the sync block.
 function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
-  var out = { m: m, setMpvPos: null, setMpvPaused: null, teardown: false };
-  if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
   var n = Object.assign({}, m);
+  var out = { m: n, setMpvPos: null, setMpvPaused: null, teardown: false };
+  // While the TV isn't advancing (tvState.waiting: still landing a seek, or
+  // "playing" but stuck buffering) mpv is held paused, so IINA waits for the
+  // TV instead of running ahead and being yanked back every couple of
+  // seconds. The hold is our own pause: expectMpvPause
+  // keeps both edges from becoming commands, and n.paused never changes.
+  function release() {
+    if (!n.holding) return;
+    n.holding = false;
+    if (!n.paused && mpvPaused) { n.expectMpvPause = false; out.setMpvPaused = false; }
+  }
+  if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
   var acked = tvState.appliedSeq >= m.seq;
   if (acked) n.seekTo = null;
-  out.m = n;
-  if (!tvState.wireless || !acked) return out; // nothing on the TV yet, or a command is in flight: no clock to follow
+  if (!tvState.wireless) { release(); return out; }
+  if (!acked) return out;
+  if (tvState.waiting) {
+    if (!n.holding && !n.paused && !mpvPaused) {
+      n.holding = true; n.expectMpvPause = true; out.setMpvPaused = true;
+    }
+    return out;
+  }
+  release();
+  if (tvState.settling) return out; // no settled TV clock to follow yet
   if (tvState.paused !== n.paused) {      // TV-remote initiated: mirror into mpv
     n.paused = tvState.paused;
     n.expectMpvPause = tvState.paused;
@@ -305,6 +329,8 @@ if (typeof iina !== "undefined") {
   function endMirror() {
     if (mirror === null) return;
     mpv.set("mute", mirror.savedMute);
+    // A hold is our own pause, and mpv's pause outlives the cast.
+    if (mirror.holding && !mirror.paused) mpv.set("pause", false);
     mirror = null;
   }
 
@@ -580,7 +606,16 @@ if (typeof iina !== "undefined") {
       if (mirror === null || !tv) return;
       var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
                               !!mpv.getFlag("pause"), Date.now());
+      // Every correction the TV pushes into mpv, so a desync can be traced
+      // in IINA's log (Window → Log Viewer, subsystem "AirPlay").
+      if (r.setMpvPaused !== null || r.setMpvPos !== null) {
+        console.log("[sync] " + JSON.stringify({ tv: tv, mpvPos: mpv.getNumber("time-pos"),
+          setPaused: r.setMpvPaused, setPos: r.setMpvPos, holding: r.m.holding }));
+      }
       mirror = r.m;
+      // Re-shown on every report (each 0.5s) so it stays up for the whole
+      // hold: IINA's OSD fades after about a second on its own.
+      if (mirror.holding) core.osd("Syncing with TV…");
       if (r.teardown) { stopCast(); return; }
       if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
       if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);

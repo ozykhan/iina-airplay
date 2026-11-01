@@ -64,6 +64,12 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   as a fallback. Verified on macOS AVFoundation, which also played HLG in an
   SDR variant; tvOS itself is untested. CoreMedia logs why it rejects a
   master (CONTRIBUTING.md, "What you cannot test without hardware").
+- **A growing HLS playlist is joined like a live stream.** While packaging runs,
+  `index.m3u8` has no `ENDLIST`, and AVFoundation starts such a playlist near its
+  newest segment, not at 0. Packaging outruns playback, so a TV picked a few
+  seconds in came up ~25s ahead of IINA. The helper serves the media playlist
+  with `#EXT-X-START:TIME-OFFSET=0` (`AddStart`). Seen on an LG webOS AirPlay
+  receiver; the rule is AVFoundation's.
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
 - **Install and update are two different mechanisms**, and satisfying one does
   not satisfy the other. Installing — by slug, or from the 1.5 store, which
