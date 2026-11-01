@@ -23,7 +23,9 @@ function loadPlugin(opts = {}) {
   const stderrs = [];        // per-serve stderr callbacks
   const logs = [];           // console.log lines
   const watchLater = ["start", "mute", "video-zoom"]; // mpv's watch-later-options
+  const prefs = { ...(opts.prefs || {}) };
   let path = opts.path;
+  const overlayCalls = [];
   let menuCallback = null;
   let loadedFile = null;
   let loads = 0;
@@ -93,7 +95,15 @@ function loadPlugin(opts = {}) {
     // the stored value or Info.json's preferenceDefaults entry. The default
     // for lanIP is "" (automatic), so that's the default here too.
     preferences: {
-      get: (k) => (k === "lanIP" ? (opts.lanIP !== undefined ? opts.lanIP : "") : undefined),
+      get: (k) => (k === "lanIP" ? (opts.lanIP !== undefined ? opts.lanIP : "") : prefs[k]),
+      set: (k, v) => { prefs[k] = v; },
+    },
+    overlay: {
+      simpleMode: () => { overlayCalls.push("simpleMode"); },
+      setStyle: () => {},
+      setContent: (html) => { overlayCalls.push("content:" + html.replace(/<svg.*<\/svg>/, "").replace(/<\/?div>/g, "")); },
+      show: () => { overlayCalls.push("show"); },
+      hide: () => { overlayCalls.push("hide"); },
     },
     console: { log: (m) => logs.push(m) },
   };
@@ -103,7 +113,7 @@ function loadPlugin(opts = {}) {
   try { require("../main.js"); } finally { delete globalThis.iina; delete require.cache[MAIN]; }
 
   return {
-    execs, posted, osd, logs,
+    execs, posted, osd, logs, overlayCalls,
     setPath: (p) => { path = p; },
     watchLater,
     flags, sets,
@@ -642,6 +652,29 @@ test("the syncing OSD stays up for the whole hold, and stops after it", () => {
   assert.equal(syncing(), 2, "not shown once the TV is moving");
 });
 
+test("hide video: the overlay covers the player only while the TV is playing", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  const tvs = { appliedSeq: 0, pos: 10, paused: false, wireless: true, ended: false };
+  p.send("tvState", tvs);
+  assert.deepEqual(p.overlayCalls, [], "off by default");
+  p.send("setHideVideo", { on: true });
+  assert.equal(p.state().hideVideo, true);
+  assert.deepEqual(p.overlayCalls, ["simpleMode", "content:Playing on TV", "show"]);
+  p.send("tvState", tvs);
+  assert.equal(p.overlayCalls.length, 3, "not re-drawn or re-shown every poll");
+  // The OSD is under the overlay, so the overlay carries the status.
+  p.send("tvState", { ...tvs, waiting: true });
+  assert.equal(p.overlayCalls.at(-1), "content:Syncing with TV…");
+  p.send("tvState", { ...tvs, paused: true });
+  assert.equal(p.overlayCalls.at(-1), "content:Paused on TV");
+  p.send("tvState", { ...tvs, wireless: false });
+  assert.equal(p.overlayCalls.at(-1), "hide", "back on the Mac: show the video");
+  p.send("tvState", tvs);
+  p.send("stop", {});
+  assert.equal(p.overlayCalls.at(-1), "hide", "stopping the cast uncovers it");
+  assert.equal(p.overlayCalls.filter((c) => c === "simpleMode").length, 1);
+});
 
 test("the TV ending with a next item queued but IINA stopped at the end ends the cast", () => {
   const p = loadPlugin({ playlist: [0, 2] });

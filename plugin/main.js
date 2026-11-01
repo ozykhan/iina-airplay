@@ -347,7 +347,7 @@ if (typeof module !== "undefined") {
 if (typeof iina !== "undefined") {
   var core = iina.core, mpv = iina.mpv, menu = iina.menu, sidebar = iina.sidebar,
       utils = iina.utils, file = iina.file, console = iina.console, event = iina.event,
-      preferences = iina.preferences;
+      preferences = iina.preferences, overlay = iina.overlay;
 
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
@@ -376,6 +376,7 @@ if (typeof iina !== "undefined") {
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
       cast: castGen,
+      hideVideo: !!preferences.get("hideVideo"),
       diag: state.diag || null,
       duration: mpv.getNumber("duration") || 0,
       subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
@@ -384,6 +385,47 @@ if (typeof iina !== "undefined") {
         seekTo: mirror.seekTo, startPos: mirror.startPos,
       },
     };
+  }
+
+  // "Hide video in IINA" (the sidebar switch, preference hideVideo): an
+  // opaque overlay over the video while the TV is playing, so the cast reads
+  // as a cast, not a mirror. mpv keeps playing underneath, muted: the sync
+  // needs its clock, and the user's controls still drive it. IINA's overlay
+  // show/hide dispatch to the main thread themselves.
+  var OVERLAY_CSS =
+    "html, body { margin: 0; height: 100%; background: #000; }" +
+    "#content { height: 100%; display: flex; flex-direction: column; gap: 10px;" +
+    " align-items: center; justify-content: center; text-shadow: none;" +
+    " color: rgba(255, 255, 255, 0.55); font-size: 15px; font-weight: 500; }" +
+    "#content svg { width: 44px; height: 44px; }";
+  var OVERLAY_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.4" y="3.4" width="19.2" height="13" rx="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M12 14.4 17 21H7z" fill="currentColor"/></svg>';
+  var overlayReady = false, overlayShown = false, overlayLabel = "", tvWireless = false;
+  // The overlay sits above IINA's OSD (its pause icon and our "Syncing with
+  // TV…" both vanish under it), so it carries that status itself.
+  function overlayStatus() {
+    if (mirror === null) return "";
+    if (mirror.holding) return "Syncing with TV…";
+    return mirror.paused ? "Paused on TV" : "Playing on TV";
+  }
+  function updateOverlay() {
+    var want = !!preferences.get("hideVideo") && mirror !== null && tvWireless;
+    if (want && !overlayReady) {
+      try {
+        overlay.simpleMode(); // throws until the player window exists
+        overlay.setStyle(OVERLAY_CSS);
+        overlayReady = true;
+      } catch (e) { return; }
+    }
+    var label = overlayStatus();
+    if (want && label !== overlayLabel) {
+      overlay.setContent(OVERLAY_ICON + "<div>" + label + "</div>");
+      overlayLabel = label;
+    }
+    if (want !== overlayShown) {
+      if (want) overlay.show(); else overlay.hide();
+      overlayShown = want;
+    }
   }
 
   // Drops the mirror without restoring mute. A hold is our own pause, and
@@ -416,6 +458,8 @@ if (typeof iina !== "undefined") {
     mpv.set("mute", mirror.savedMute);
     unskipResume("mute");
     dropMirror();
+    tvWireless = false;
+    updateOverlay();
   }
 
   // Helper-initiated teardowns (stopped/error events, exec settling) happen in
@@ -458,6 +502,7 @@ if (typeof iina !== "undefined") {
       stopCast();
       state = why;
     }
+    updateOverlay(); // stays up across the swap; comes down if the swap failed
   });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
@@ -663,6 +708,11 @@ if (typeof iina !== "undefined") {
       startCast();
       sidebar.postMessage("state", stateForPage());
     });
+    sidebar.onMessage("setHideVideo", function (d) {
+      preferences.set("hideVideo", !!(d && d.on));
+      updateOverlay();
+      sidebar.postMessage("state", stateForPage());
+    });
     sidebar.onMessage("stop", function () {
       stopCast();
       sidebar.postMessage("state", stateForPage());
@@ -691,6 +741,7 @@ if (typeof iina !== "undefined") {
       reapMirror(); // a helper-initiated teardown may have left a stale mirror
                     // un-reaped; don't mpv.set against a dead stream.
       if (mirror === null || !tv) return;
+      tvWireless = !!tv.wireless;
       var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
                               !!mpv.getFlag("pause"), Date.now());
       // Every correction the TV pushes into mpv, so a desync can be traced
@@ -700,9 +751,11 @@ if (typeof iina !== "undefined") {
           setPaused: r.setMpvPaused, setPos: r.setMpvPos, holding: r.m.holding }));
       }
       mirror = r.m;
+      updateOverlay();
       // Re-shown on every report (each 0.5s) so it stays up for the whole
-      // hold: IINA's OSD fades after about a second on its own.
-      if (mirror.holding) core.osd("Syncing with TV…");
+      // hold: IINA's OSD fades after about a second on its own. Under the
+      // overlay it can't be seen; the overlay says it instead.
+      if (mirror.holding && !overlayShown) core.osd("Syncing with TV…");
       // IINA advances the playlist itself when an episode ends, and
       // file-loaded carries the cast over. The TV ending ends the cast on
       // the last item, or when IINA stopped at the end of this one instead.

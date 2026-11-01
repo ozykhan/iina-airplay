@@ -7,8 +7,8 @@
   "author": { "name": "Faruk Can Ozkan" },
   "description": "Cast the current file to an AirPlay device: remuxes to HLS, serves on the LAN, and hands the stream to the TV. IINA stays your remote.",
   "entry": "main.js",
-  "permissions": ["file-system", "show-osd"],
+  "permissions": ["file-system", "show-osd", "video-overlay"],
   "sidebarTab": { "name": "AirPlay" },
   "preferencesPage": "preferences.html",
-  "preferenceDefaults": { "lanIP": "" }
+  "preferenceDefaults": { "lanIP": "", "hideVideo": false }
 }

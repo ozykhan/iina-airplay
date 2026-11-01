@@ -24,6 +24,8 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
   buffers, IINA waits for it and says so rather than running ahead.
 - **Playlists keep casting.** When IINA moves to the next file, by hand or at the end
   of an episode, the cast follows it to the TV.
+- **A cast, not a copy.** Optionally hide the video in IINA while the TV plays it
+  (a switch in the AirPlay sidebar), leaving the status and IINA's controls.
 - **Your subtitles come along.** The text track you selected in IINA (embedded or
   external SRT/ASS) is carried as a WebVTT rendition the TV shows through its own menu.
 - **Nothing to install first.** A pinned LGPL ffmpeg build and a small Go helper ship
