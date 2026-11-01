@@ -393,9 +393,28 @@ if (typeof iina !== "undefined") {
     mirror = null;
   }
 
+  // mpv's resume file (watch later) saves mute, among others, with each
+  // file. Our cast-time mute must not outlive the cast: a file closed
+  // mid-cast (the next episode, IINA quitting) would reopen muted. So a
+  // property we're holding is taken off watch-later-options until we let go.
+  // `skipped` remembers whether it was on the list, so a list the user
+  // trimmed isn't widened on the way back.
+  var skipped = {};
+  function skipResume(prop) {
+    if (prop in skipped) return;
+    skipped[prop] = (mpv.getNative("watch-later-options") || []).indexOf(prop) !== -1;
+    if (skipped[prop]) mpv.command("change-list", ["watch-later-options", "remove", prop]);
+  }
+  function unskipResume(prop) {
+    if (!(prop in skipped)) return;
+    if (skipped[prop]) mpv.command("change-list", ["watch-later-options", "append", prop]);
+    delete skipped[prop];
+  }
+
   function endMirror() {
     if (mirror === null) return;
     mpv.set("mute", mirror.savedMute);
+    unskipResume("mute");
     dropMirror();
   }
 
@@ -434,6 +453,7 @@ if (typeof iina !== "undefined") {
       // The new file can't be cast. No new serve took over the old helper,
       // so stop it here (nothing to race now), keeping startCast's reason.
       mpv.set("mute", savedMute);
+      unskipResume("mute");
       var why = state;
       stopCast();
       state = why;
@@ -540,6 +560,7 @@ if (typeof iina !== "undefined") {
     // Muted mirror: keep mpv playing, silenced, instead of pausing. The page
     // will best-effort seek the TV to startPos once wireless playback begins.
     mirror = newMirror(mpv.getNumber("time-pos") || 0, !!mpv.getFlag("mute"), !!mpv.getFlag("pause"));
+    skipResume("mute");
     mpv.set("mute", true);
 
     resolveBinDir(function (binDir, resolveErr) {

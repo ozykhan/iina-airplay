@@ -22,6 +22,7 @@ function loadPlugin(opts = {}) {
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
   const stderrs = [];        // per-serve stderr callbacks
   const logs = [];           // console.log lines
+  const watchLater = ["start", "mute", "video-zoom"]; // mpv's watch-later-options
   let path = opts.path;
   let menuCallback = null;
   let loadedFile = null;
@@ -42,7 +43,13 @@ function loadPlugin(opts = {}) {
                        : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42)
                        : k === "playlist-pos" ? (opts.playlist ? opts.playlist[0] : 0)
                        : k === "playlist-count" ? (opts.playlist ? opts.playlist[1] : 1) : 0),
-      getNative: () => trackList,
+      getNative: (k) => (k === "watch-later-options" ? watchLater.slice() : trackList),
+      command: (name, args) => {
+        if (name === "change-list" && args[0] === "watch-later-options") {
+          if (args[1] === "remove") watchLater.splice(watchLater.indexOf(args[2]), 1);
+          else watchLater.push(args[2]);
+        }
+      },
       getFlag: (k) => !!flags[k],
       set: (k, v) => { sets.push([k, v]); flags[k] = v; },
     },
@@ -98,6 +105,7 @@ function loadPlugin(opts = {}) {
   return {
     execs, posted, osd, logs,
     setPath: (p) => { path = p; },
+    watchLater,
     flags, sets,
     fire: (name) => { assert.ok(events[name], `no event handler for "${name}"`); events[name](); },
     helperSays: (obj) => { assert.ok(stdouts.length, "no serve running"); stdouts.at(-1)(JSON.stringify(obj) + "\n"); },
@@ -654,4 +662,17 @@ test("a next file that can't be cast stops the old helper and keeps the reason",
   p.send("getState", {});
   assert.equal(p.state().phase, "error");
   assert.match(p.state().msg, /network streams/);
+});
+
+test("a file closed mid-cast doesn't remember the cast's mute", () => {
+  // mpv's resume file saves mute; IINA is muted only because the TV has the
+  // sound. Carry-over closes the previous episode mid-cast.
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  assert.ok(!p.watchLater.includes("mute"), "off the resume list while we hold it");
+  p.fire("iina.file-loaded");
+  assert.ok(!p.watchLater.includes("mute"), "still held across the carry-over");
+  p.send("stop", {});
+  assert.ok(p.watchLater.includes("mute"), "back on the list after the cast");
+  assert.equal(p.watchLater.filter((o) => o === "mute").length, 1);
 });
