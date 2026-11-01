@@ -174,6 +174,15 @@ test("commands wait until the element has the stream, then apply once", () => {
   assert.equal(p.video.currentTime, 300);
 });
 
+test("a new cast mid-cast keeps the element until the new stream is ready", () => {
+  const p = loadPage();
+  p.state({ phase: "ready", url: URL_, cast: 1, sync: sync() });
+  p.state({ phase: "starting", url: null, cast: 2, sync: sync() });
+  assert.equal(p.video.src, URL_, "dropping src would drop the AirPlay route");
+  const next = "http://192.168.1.2:5001/master.m3u8";
+  p.state({ phase: "ready", url: next, cast: 2, sync: sync() });
+  assert.equal(p.video.src, next);
+});
 
 test("a TV reporting playing at a frozen position is reported as waiting", () => {
   const p = loadPage();

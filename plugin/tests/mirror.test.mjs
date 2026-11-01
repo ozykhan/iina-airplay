@@ -200,3 +200,10 @@ test("a TV stuck 'playing' at one spot holds mpv instead of yanking it back", ()
   assert.equal(moving.setMpvPos, 32.7, "one correction once the TV moves, not a loop");
 });
 
+test("the TV ending mid-hold releases mpv so it can reach the next episode", () => {
+  const m0 = { ...newMirror(0, false, false), holding: true };
+  const r = mirrorOnTvState(m0, tv({ ended: true }), 1390, true, 0);
+  assert.equal(r.teardown, true);
+  assert.equal(r.setMpvPaused, false);
+  assert.equal(r.m.holding, false);
+});

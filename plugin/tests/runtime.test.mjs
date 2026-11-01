@@ -22,6 +22,7 @@ function loadPlugin(opts = {}) {
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
   const stderrs = [];        // per-serve stderr callbacks
   const logs = [];           // console.log lines
+  let path = opts.path;
   let menuCallback = null;
   let loadedFile = null;
   let loads = 0;
@@ -34,11 +35,13 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
     mpv: {
-      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv")
+      getString: (k) => (k === "path" ? (path !== undefined ? path : "/movies/a.mkv")
                        : k === "video-params/gamma" ? (opts.gamma !== undefined ? opts.gamma : "bt.1886")
                        : null),
       getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120
-                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
+                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42)
+                       : k === "playlist-pos" ? (opts.playlist ? opts.playlist[0] : 0)
+                       : k === "playlist-count" ? (opts.playlist ? opts.playlist[1] : 1) : 0),
       getNative: () => trackList,
       getFlag: (k) => !!flags[k],
       set: (k, v) => { sets.push([k, v]); flags[k] = v; },
@@ -94,6 +97,7 @@ function loadPlugin(opts = {}) {
 
   return {
     execs, posted, osd, logs,
+    setPath: (p) => { path = p; },
     flags, sets,
     fire: (name) => { assert.ok(events[name], `no event handler for "${name}"`); events[name](); },
     helperSays: (obj) => { assert.ok(stdouts.length, "no serve running"); stdouts.at(-1)(JSON.stringify(obj) + "\n"); },
@@ -382,14 +386,30 @@ test("tvState.ended tears the cast down and restores mute", () => {
   assert.equal(p.state().phase, "idle");
 });
 
-test("loading a new file during a cast tears it down", () => {
-  const p = loadPlugin();
+test("loading a new file during a cast carries the cast over to it", () => {
+  const p = loadPlugin({ mute: false });
   p.clickMenu();
+  p.send("getState", {});
+  const firstCast = p.state().cast;
   p.fire("iina.file-loaded");
-  assert.equal(stops(p).length, 1);
+  // No `helper stop`: it could land after the new serve and kill it.
+  assert.equal(stops(p).length, 0);
+  assert.equal(serves(p).length, 2);
+  assert.equal(p.flags.mute, true, "still muted: the TV has the sound");
+  p.send("getState", {});
+  assert.notEqual(p.state().cast, firstCast, "the page must see a new cast");
+  assert.equal(p.state().phase, "starting");
+  // Stopping later restores the user's original mute, not our own.
+  p.send("stop", {});
   assert.equal(p.flags.mute, false);
 });
 
+test("the TV ending an episode with another queued leaves the cast to carry over", () => {
+  const p = loadPlugin({ playlist: [0, 2] });
+  p.clickMenu();
+  p.send("tvState", { appliedSeq: 0, pos: 120, paused: false, wireless: true, ended: true });
+  assert.equal(stops(p).length, 0);
+});
 
 test("file-loaded without a cast is a no-op", () => {
   const p = loadPlugin();
@@ -615,4 +635,23 @@ test("the syncing OSD stays up for the whole hold, and stops after it", () => {
 });
 
 
+test("the TV ending with a next item queued but IINA stopped at the end ends the cast", () => {
+  const p = loadPlugin({ playlist: [0, 2] });
+  p.clickMenu();
+  p.flags["eof-reached"] = true;   // IINA kept the finished file open instead of advancing
+  p.send("tvState", { appliedSeq: 0, pos: 120, paused: false, wireless: true, ended: true });
+  assert.equal(stops(p).length, 1);
+});
 
+test("a next file that can't be cast stops the old helper and keeps the reason", () => {
+  const p = loadPlugin({ mute: false });
+  p.clickMenu();
+  p.flags.mute = true;
+  p.setPath("https://example.com/stream.m3u8");
+  p.fire("iina.file-loaded");
+  assert.equal(stops(p).length, 1, "nothing else would stop the previous episode's helper");
+  assert.equal(p.flags.mute, false);
+  p.send("getState", {});
+  assert.equal(p.state().phase, "error");
+  assert.match(p.state().msg, /network streams/);
+});

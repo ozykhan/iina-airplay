@@ -291,7 +291,9 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
     n.holding = false;
     if (!n.paused && mpvPaused) { n.expectMpvPause = false; out.setMpvPaused = false; }
   }
-  if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
+  // Released on the way out too: if the cast carries over to the next
+  // episode, mpv must play on to reach it.
+  if (tvState.ended && tvState.wireless) { release(); out.teardown = true; return out; }
   var acked = tvState.appliedSeq >= m.seq;
   if (acked) n.seekTo = null;
   if (!tvState.wireless) { release(); return out; }
@@ -373,6 +375,7 @@ if (typeof iina !== "undefined") {
     // which IINA runs on the main thread.
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      cast: castGen,
       diag: state.diag || null,
       duration: mpv.getNumber("duration") || 0,
       subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
@@ -383,12 +386,17 @@ if (typeof iina !== "undefined") {
     };
   }
 
+  // Drops the mirror without restoring mute. A hold is our own pause, and
+  // mpv's pause outlives both the cast and the file, so it's lifted here.
+  function dropMirror() {
+    if (mirror.holding && !mirror.paused) mpv.set("pause", false);
+    mirror = null;
+  }
+
   function endMirror() {
     if (mirror === null) return;
     mpv.set("mute", mirror.savedMute);
-    // A hold is our own pause, and mpv's pause outlives the cast.
-    if (mirror.holding && !mirror.paused) mpv.set("pause", false);
-    mirror = null;
+    dropMirror();
   }
 
   // Helper-initiated teardowns (stopped/error events, exec settling) happen in
@@ -406,11 +414,30 @@ if (typeof iina !== "undefined") {
     if (mirror === null) return;
     mirror = mirrorOnMpvSeek(mirror, mpv.getNumber("time-pos") || 0, Date.now());
   });
-  // A new file invalidates the whole cast: the stream on the TV is the old
-  // file. file-loaded is an app event (main thread), so stopCast is safe here.
+  // A new file mid-cast (next episode, by hand or at the end of the last one)
+  // carries the cast over: package the new file and let the page swap the
+  // stream on the same <video>, which keeps it on the TV. No stopCast: its
+  // async `helper stop` could land after the new helper started and kill it;
+  // the new `serve` takes over the old instance and its output dir itself.
+  // mpv stays muted throughout, so the new mirror inherits the mute flag the
+  // user had before the first cast, not our own. file-loaded is an app event
+  // (main thread), so touching mpv is safe here.
   event.on("iina.file-loaded", function () {
     if (mirror === null) return;
-    stopCast();
+    var savedMute = mirror.savedMute;
+    dropMirror();
+    state = { phase: "idle", url: null, pct: 0, msg: null };
+    startCast();
+    if (mirror !== null) {
+      mirror.savedMute = savedMute;
+    } else {
+      // The new file can't be cast. No new serve took over the old helper,
+      // so stop it here (nothing to race now), keeping startCast's reason.
+      mpv.set("mute", savedMute);
+      var why = state;
+      stopCast();
+      state = why;
+    }
   });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
@@ -655,7 +682,12 @@ if (typeof iina !== "undefined") {
       // Re-shown on every report (each 0.5s) so it stays up for the whole
       // hold: IINA's OSD fades after about a second on its own.
       if (mirror.holding) core.osd("Syncing with TV…");
-      if (r.teardown) { stopCast(); return; }
+      // IINA advances the playlist itself when an episode ends, and
+      // file-loaded carries the cast over. The TV ending ends the cast on
+      // the last item, or when IINA stopped at the end of this one instead.
+      var carriesOver = mpv.getNumber("playlist-pos") < mpv.getNumber("playlist-count") - 1 &&
+                        !mpv.getFlag("eof-reached");
+      if (r.teardown && !carriesOver) { stopCast(); return; }
       if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
       if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);
     });

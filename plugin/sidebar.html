@@ -140,6 +140,7 @@
   var primary = document.getElementById("primary");
   var secondary = document.getElementById("secondary");
   var loadedURL = null;
+  var castSeen = null;      // main.js's cast id; a change mid-cast means a new file
   var wantPaused = false;   // IINA's pause state as last applied; a (re)load honours it
   var retried = false;      // known WebKit flake: first load may fail once
   var airplayAvailable = false;
@@ -257,6 +258,16 @@
       // main.js tore the cast down (helper died, file changed, TV ended):
       // drop the stream locally too, or the element keeps AirPlaying a corpse.
       teardownLocal();
+    }
+    if (s.cast !== castSeen) {
+      castSeen = s.cast;
+      if (casting && loadedURL) {
+        // A new cast replaced this one (the next episode): forget the old
+        // stream, whose helper is gone, but leave the element and its AirPlay
+        // route alone until the new URL is ready to load into it.
+        loadedURL = null; retried = false; appliedSeq = 0; ended = false;
+        initialSeekPending = false; seekTarget = null; stalled = false;
+      }
     }
     applySync(s.sync);
     present(s);
