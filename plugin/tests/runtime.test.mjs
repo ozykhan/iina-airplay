@@ -663,13 +663,21 @@ test("hide video: the overlay covers the player only while the TV is playing", (
   assert.deepEqual(p.overlayCalls, ["simpleMode", "content:Playing on TV", "show"]);
   p.send("tvState", tvs);
   assert.equal(p.overlayCalls.length, 3, "not re-drawn or re-shown every poll");
-  // The OSD is under the overlay, so the overlay carries the status.
+  // The overlay carries the status (the OSD is suppressed while it's up).
   p.send("tvState", { ...tvs, waiting: true });
   assert.equal(p.overlayCalls.at(-1), "content:Syncing with TV…");
   p.send("tvState", { ...tvs, paused: true });
   assert.equal(p.overlayCalls.at(-1), "content:Paused on TV");
+  // mpv blanks the video (the overlay is transparent, so IINA's floating
+  // control bar beneath it stays visible) and restores it after.
+  assert.equal(p.flags["video-zoom"], -20);
+  assert.equal(p.flags["blend-subtitles"], "video");
+  assert.ok(!p.watchLater.includes("video-zoom"), "a file closed now must not reopen black");
   p.send("tvState", { ...tvs, wireless: false });
   assert.equal(p.overlayCalls.at(-1), "hide", "back on the Mac: show the video");
+  assert.equal(p.flags["video-zoom"], 0);
+  assert.equal(p.flags["blend-subtitles"], "no");
+  assert.ok(p.watchLater.includes("video-zoom"));
   p.send("tvState", tvs);
   p.send("stop", {});
   assert.equal(p.overlayCalls.at(-1), "hide", "stopping the cast uncovers it");

@@ -387,22 +387,47 @@ if (typeof iina !== "undefined") {
     };
   }
 
-  // "Hide video in IINA" (the sidebar switch, preference hideVideo): an
-  // opaque overlay over the video while the TV is playing, so the cast reads
-  // as a cast, not a mirror. mpv keeps playing underneath, muted: the sync
-  // needs its clock, and the user's controls still drive it. IINA's overlay
-  // show/hide dispatch to the main thread themselves.
+  // "Hide video in IINA" (the sidebar switch, preference hideVideo): while
+  // the TV is playing, IINA shows the cast status instead of a muted copy of
+  // the video, so the cast reads as a cast, not a mirror. mpv keeps playing:
+  // the sync needs its clock, and the user's controls still drive it.
+  //
+  // The overlay itself stays transparent. IINA puts the plugin overlay above
+  // its floating control bar, so an opaque cover hid the controls. mpv blanks
+  // the video instead (blankVideo). The overlay only draws the status.
   var OVERLAY_CSS =
-    "html, body { margin: 0; height: 100%; background: #000; }" +
+    "html, body { margin: 0; height: 100%; background: transparent; }" +
     "#content { height: 100%; display: flex; flex-direction: column; gap: 10px;" +
-    " align-items: center; justify-content: center; text-shadow: none;" +
+    " align-items: center; justify-content: center;" +
+    " text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);" +
     " color: rgba(255, 255, 255, 0.55); font-size: 15px; font-weight: 500; }" +
     "#content svg { width: 44px; height: 44px; }";
   var OVERLAY_ICON =
     '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.4" y="3.4" width="19.2" height="13" rx="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M12 14.4 17 21H7z" fill="currentColor"/></svg>';
   var overlayReady = false, overlayShown = false, overlayLabel = "", tvWireless = false;
-  // The overlay sits above IINA's OSD (its pause icon and our "Syncing with
-  // TV…" both vanish under it), so it carries that status itself.
+  // video-zoom is log2: -20 (mpv's minimum) draws the video at a millionth
+  // of its size, i.e. not at all. Subtitles are drawn at window size
+  // regardless (sub-scale-by-window doesn't reach ASS), so blend-subtitles
+  // =video draws them into the frame, where they shrink with it. IINA
+  // observes neither, so no OSD flashes, unlike brightness/contrast or
+  // sub-visibility. video-zoom is kept out of mpv's resume file while it's
+  // ours (skipResume), or a file closed with the video hidden reopens black.
+  var savedView = null;
+  function blankVideo(on) {
+    if (on) {
+      savedView = { zoom: mpv.getNumber("video-zoom") || 0,
+                    blend: mpv.getString("blend-subtitles") || "no" };
+      skipResume("video-zoom");
+      mpv.set("video-zoom", -20);
+      mpv.set("blend-subtitles", "video");
+    } else if (savedView !== null) {
+      mpv.set("video-zoom", savedView.zoom);
+      mpv.set("blend-subtitles", savedView.blend);
+      unskipResume("video-zoom");
+      savedView = null;
+    }
+  }
+
   function overlayStatus() {
     if (mirror === null) return "";
     if (mirror.holding) return "Syncing with TV…";
@@ -424,6 +449,7 @@ if (typeof iina !== "undefined") {
     }
     if (want !== overlayShown) {
       if (want) overlay.show(); else overlay.hide();
+      blankVideo(want);
       overlayShown = want;
     }
   }
@@ -753,8 +779,8 @@ if (typeof iina !== "undefined") {
       mirror = r.m;
       updateOverlay();
       // Re-shown on every report (each 0.5s) so it stays up for the whole
-      // hold: IINA's OSD fades after about a second on its own. Under the
-      // overlay it can't be seen; the overlay says it instead.
+      // hold: IINA's OSD fades after about a second on its own. With the
+      // overlay up it already says this; don't say it twice.
       if (mirror.holding && !overlayShown) core.osd("Syncing with TV…");
       // IINA advances the playlist itself when an episode ends, and
       // file-loaded carries the cast over. The TV ending ends the cast on
