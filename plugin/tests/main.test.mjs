@@ -15,7 +15,7 @@ test("selectTracks picks selected audio and first video", () => {
   const r = selectTracks(mpvTracks);
   assert.deepEqual(r, {
     vcodec: "hevc", acodec: "truehd", achannels: 8, vmap: 0, amap: 2,
-    sub: { path: null, smap: 3, lang: "", title: "" }, subDropped: false,
+    sub: { path: null, smap: 3, lang: "", title: "", codec: "subrip" }, subDropped: false,
   });
 });
 
@@ -49,7 +49,7 @@ test("selectTracks carries lang and title of the selected text sub", () => {
   const tracks = mpvTracks.map(t =>
     t.type === "sub" ? { ...t, lang: "en", title: "English (SDH)" } : t);
   assert.deepEqual(selectTracks(tracks).sub,
-    { path: null, smap: 3, lang: "en", title: "English (SDH)" });
+    { path: null, smap: 3, lang: "en", title: "English (SDH)", codec: "subrip" });
 });
 
 test("selectTracks uses the external file path for external subs", () => {

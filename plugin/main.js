@@ -39,7 +39,8 @@ function selectTracks(trackList) {
     if (!TEXT_SUB_CODECS[sub.codec] || (sub.external && !path)) {
       r.subDropped = true;
     } else {
-      r.sub = { path: path, smap: sub["ff-index"], lang: sub.lang || "", title: sub.title || "" };
+      r.sub = { path: path, smap: sub["ff-index"], lang: sub.lang || "", title: sub.title || "",
+                codec: sub.codec };
     }
   }
   return r;
@@ -510,7 +511,8 @@ if (typeof iina !== "undefined") {
       if (tracks.sub) {
         if (tracks.sub.path) serveArgs.push("-subpath", tracks.sub.path);
         else serveArgs.push("-smap", String(tracks.sub.smap));
-        serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
+        serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title,
+                       "-subcodec", tracks.sub.codec);
       }
       if (lanIP) serveArgs.push("-ip", lanIP);
       if (vrange) serveArgs.push("-vrange", vrange);
