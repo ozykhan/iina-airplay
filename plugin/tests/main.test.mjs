@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure, videoRangeHint } = require("../main.js");
+const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, identifierFromDataDir, identifierPattern, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure, videoRangeHint } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -118,6 +118,25 @@ test("pluginsDirFromDataDir returns null for an unexpected shape", () => {
   assert.equal(pluginsDirFromDataDir("/Users/x/somewhere/else"), null);
   assert.equal(pluginsDirFromDataDir(""), null);
   assert.equal(pluginsDirFromDataDir(null), null);
+});
+
+test("identifierFromDataDir reads the identifier off the data dir", () => {
+  const plugins = "/Users/x/Library/Application Support/com.colliderli.iina/plugins";
+  assert.equal(identifierFromDataDir(plugins + "/.data/dev.faruk.iina-airplay"), "dev.faruk.iina-airplay");
+  // The `make dev` build: its own identifier, so its own data dir.
+  assert.equal(identifierFromDataDir(plugins + "/.data/dev.faruk.iina-airplay.dev/"), "dev.faruk.iina-airplay.dev");
+});
+
+test("identifierFromDataDir returns null for an unexpected shape", () => {
+  assert.equal(identifierFromDataDir("/Users/x/somewhere/else"), null);
+  assert.equal(identifierFromDataDir("/plugins/.data/"), null);
+  assert.equal(identifierFromDataDir(""), null);
+  assert.equal(identifierFromDataDir(null), null);
+});
+
+test("identifierPattern escapes the identifier's dots and anchors on the closing quote", () => {
+  assert.equal(identifierPattern("dev.faruk.iina-airplay"), '"identifier": *"dev\\.faruk\\.iina-airplay"');
+  assert.equal(identifierPattern("a*b[c^d$e\\f"), '"identifier": *"a\\*b\\[c\\^d\\$e\\\\f"');
 });
 
 test("hasURLScheme rejects filesystem paths", () => {

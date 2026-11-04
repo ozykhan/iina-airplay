@@ -86,6 +86,60 @@ function pluginsDirFromDataDir(dataPath) {
   return normalized.slice(0, idx);
 }
 
+// The plugin's own identifier: the last component of that same data dir.
+// Read at runtime rather than hardcoded, because the installed plugin and a
+// `make dev` build carry different identifiers (packaging/dev-manifest.mjs)
+// and sit in the same plugins folder. Each has to find its own bin/. Returns
+// null if the path doesn't have the expected shape.
+function identifierFromDataDir(dataPath) {
+  if (!dataPath) return null;
+  var normalized = dataPath.replace(/\/+$/, "");
+  var idx = normalized.lastIndexOf("/.data/");
+  if (idx === -1) return null;
+  var id = normalized.slice(idx + "/.data/".length);
+  return id && id.indexOf("/") === -1 ? id : null;
+}
+
+// A grep basic regex for the identifier line of a plugin's Info.json, with any
+// spacing after the colon. The identifier is escaped because its dots would
+// otherwise match any character (IINA only allows word characters, "-" and
+// "." in one, but the rest of BRE's specials are escaped too). The closing
+// quote is what keeps "dev.faruk.iina-airplay" from matching
+// "dev.faruk.iina-airplay.dev".
+function identifierPattern(id) {
+  return '"identifier": *"' + id.replace(/[.*[^$\\]/g, "\\$&") + '"';
+}
+
+// Finds the bin/ of the plugin whose Info.json matches the pattern in $2,
+// among the plugin folders in $1 (IINA's plugins directory). The glob follows
+// the symlink `iina-plugin link` leaves there, so a dev build resolves to the
+// checkout's plugin/bin. Prints the bin dir and exits 0; exits 3 when the
+// plugin is found but its binaries won't run; exits 1 when it isn't found.
+//
+// com.apple.quarantine does NOT clear the executable bit (verified: a
+// quarantined file still passes `[ -x ]`), so the `-x` test alone cannot
+// catch the browser-download case docs/distribution.md and README.md promise
+// is detected. Worse, exec'ing a quarantined binary blocks on a Gatekeeper
+// dialog instead of failing fast, so check for the xattr with
+// `/usr/bin/xattr -p` (absolute path: /bin/sh via utils.exec runs with an
+// empty PATH) BEFORE anything ever execs the binary. `xattr -p` succeeding
+// (exit 0) means the attribute is present, i.e. quarantined.
+//
+// The pattern is an argument rather than spliced into the script, so nothing
+// in an identifier is ever parsed as shell.
+var BIN_DIR_LOOKUP_SCRIPT =
+  'for d in "$1"/*/; do' +
+  '  if /usr/bin/grep -qs -e "$2" "$d/Info.json"; then' +
+  '    h="$d"bin/airplay-helper; f="$d"bin/ffmpeg;' +
+  '    if [ -x "$h" ] && [ -x "$f" ] ' +
+  '        && ! /usr/bin/xattr -p com.apple.quarantine "$h" >/dev/null 2>&1 ' +
+  '        && ! /usr/bin/xattr -p com.apple.quarantine "$f" >/dev/null 2>&1; then' +
+  '      printf %s "$d"bin; exit 0;' +
+  '    fi;' +
+  '    exit 3;' +
+  '  fi;' +
+  'done; exit 1';
+
 function isValidPid(pid) {
   return typeof pid === "number" && isFinite(pid) && pid > 0;
 }
@@ -268,6 +322,9 @@ if (typeof module !== "undefined") {
     subtitleLabel: subtitleLabel,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
+    identifierFromDataDir: identifierFromDataDir,
+    identifierPattern: identifierPattern,
+    BIN_DIR_LOOKUP_SCRIPT: BIN_DIR_LOOKUP_SCRIPT,
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
@@ -357,9 +414,9 @@ if (typeof iina !== "undefined") {
   });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
-  // plugin itself lives directly under that <.../plugins> directory. Locate
-  // bin/ relative to the data dir's parent plugins folder at runtime via a
-  // glob through /bin/sh once, then cache it in @data so later launches skip
+  // plugin itself lives directly under that <.../plugins> directory, in the
+  // folder whose Info.json carries <identifier>. Find it with
+  // BIN_DIR_LOOKUP_SCRIPT once, then cache it in @data so later launches skip
   // the lookup.
   // utils.exec wipes the environment (only LC_ALL survives — no HOME), so the
   // plugins dir is derived in JS via utils.resolvePath and passed to the
@@ -368,29 +425,11 @@ if (typeof iina !== "undefined") {
     var cached = null;
     try { cached = file.read("@data/bindir.txt"); } catch (e) {}
     if (cached && cached.trim()) { cb(cached.trim(), null); return; }
-    var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data/"));
-    if (!pluginsDir) { cb(null, "cannot resolve plugins directory"); return; }
-    // com.apple.quarantine does NOT clear the executable bit (verified: a
-    // quarantined file still passes `[ -x ]`), so the `-x` test alone cannot
-    // catch the browser-download case docs/distribution.md and README.md
-    // promise is detected. Worse, exec'ing a quarantined binary blocks on a
-    // Gatekeeper dialog instead of failing fast, so check for the xattr with
-    // `/usr/bin/xattr -p` (absolute path — /bin/sh via utils.exec runs with
-    // an empty PATH) BEFORE anything ever execs the binary. `xattr -p`
-    // succeeding (exit 0) means the attribute is present, i.e. quarantined.
-    var script =
-      'for d in "$1"/*/; do' +
-      '  if /usr/bin/grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
-      '    h="$d"bin/airplay-helper; f="$d"bin/ffmpeg;' +
-      '    if [ -x "$h" ] && [ -x "$f" ] ' +
-      '        && ! /usr/bin/xattr -p com.apple.quarantine "$h" >/dev/null 2>&1 ' +
-      '        && ! /usr/bin/xattr -p com.apple.quarantine "$f" >/dev/null 2>&1; then' +
-      '      printf %s "$d"bin; exit 0;' +
-      '    fi;' +
-      '    exit 3;' +           // found the plugin, but its binaries won't run
-      '  fi;' +
-      'done; exit 1';
-    utils.exec("/bin/sh", ["-c", script, "sh", pluginsDir]).then(function (r) {
+    var dataDir = utils.resolvePath("@data/");
+    var pluginsDir = pluginsDirFromDataDir(dataDir);
+    var identifier = identifierFromDataDir(dataDir);
+    if (!pluginsDir || !identifier) { cb(null, "cannot resolve plugins directory"); return; }
+    utils.exec("/bin/sh", ["-c", BIN_DIR_LOOKUP_SCRIPT, "sh", pluginsDir, identifierPattern(identifier)]).then(function (r) {
       if (r.status === 0 && r.stdout) {
         file.write("@data/bindir.txt", r.stdout);
         cb(r.stdout, null);
