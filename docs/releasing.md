@@ -266,10 +266,14 @@ little longer — the safe direction.
 > failure mode (a failed fetch is thrown rather than folded into `nil`). See
 > "Two branches, because two IINAs" above.
 
-`plugin/Info.json` is a gitignored symlink created by `make dev`, because a
-plugin directory must carry its own manifest for IINA to load it. Never commit
-it: `raw.githubusercontent.com` serves a symlink's target path as text, so the
-update check would parse `../Info.json` instead of JSON.
+`plugin/Info.json` is a gitignored file that `make dev` generates, because a
+plugin directory must carry its own manifest for IINA to load it. It is the
+root manifest under a dev identifier, without `ghRepo`/`ghVersion`
+(`packaging/dev-manifest.mjs` says why). Nothing reads it but a local IINA:
+the update check reads the root `Info.json` on the branch, and `pack.sh`
+copies the root `Info.json` into the package. It used to be a symlink to
+`../Info.json`, which could never have been committed either:
+`raw.githubusercontent.com` serves a symlink's target path as text.
 
 ## If the `release` job fails
 

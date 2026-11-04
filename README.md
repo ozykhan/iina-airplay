@@ -107,7 +107,8 @@ binary.
 ```sh
 brew install ffmpeg go node
 make dev        # builds the helper, symlinks brew's ffmpeg into plugin/bin,
-                 # links the plugin into IINA
+                 # links the plugin into IINA as "AirPlay (dev)"
+make undev      # takes it out of IINA again
 ```
 
 `make dev` only needs the three packages above — it uses brew's `ffmpeg`, it
@@ -115,11 +116,13 @@ never builds one from source. `nasm` is a separate prerequisite, needed only
 if you'll also run `make pack` / `make ffmpeg` (see above): `brew install nasm`.
 
 Restart IINA to pick up plugin changes (`standaloneWindow`/`sidebar` are
-WKWebViews and don't hot-reload JS on their own). Enable the plugin under
-IINA Settings → Plugins. Plugin logs go to IINA's log, which is off by default:
-turn on **Enable advanced settings** and **Enable logging to file** under
-Settings → Advanced, restart IINA, then open **Window → Log Viewer** (⌃⌘L) and
-pick the subsystem ending in `- AirPlay`.
+WKWebViews and don't hot-reload JS on their own). Enable **AirPlay (dev)** under
+IINA Settings → Plugins. It has its own identifier, so it can sit next to an
+installed copy of the plugin; disable the one you aren't testing. Plugin logs
+go to IINA's log, which is off by default: turn on **Enable advanced settings**
+and **Enable logging to file** under Settings → Advanced, restart IINA, then
+open **Window → Log Viewer** (⌃⌘L) and pick the subsystem ending in
+`- AirPlay (dev)`.
 
 If a cast says ready but the TV never plays, set the **LAN address** under
 Settings → Plugins → AirPlay → Preferences to the Mac's address on the TV's

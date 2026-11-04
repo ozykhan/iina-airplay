@@ -59,7 +59,7 @@ function loadPlugin(opts = {}) {
       show: () => { shown++; },
     },
     utils: {
-      resolvePath: (p) => "/plugins/.data/dev.faruk.iina-airplay" + (p === "@tmp/hls" ? "/tmp/hls" : ""),
+      resolvePath: (p) => (opts.dataDir || "/plugins/.data/dev.faruk.iina-airplay") + (p === "@tmp/hls" ? "/tmp/hls" : ""),
       exec: (bin, args, cwd, onStdout, onStderr) => {
         execs.push({ bin, args });
         if (typeof onStdout === "function") stdouts.push(onStdout);
@@ -224,6 +224,24 @@ test("no sub flags when no sub is selected", () => {
   assert.equal(args.indexOf("-smap"), -1);
   assert.equal(args.indexOf("-subpath"), -1);
   assert.equal(args.indexOf("-sublang"), -1);
+});
+
+test("the bin dir lookup searches for this copy's own identifier, read off its data dir", async () => {
+  // A `make dev` build sits next to the installed plugin under a different
+  // identifier; a lookup hardcoding the installed one would hand the dev
+  // build the installed copy's helper.
+  const { identifierPattern } = require("../main.js");
+  const p = loadPlugin({
+    dataDir: "/plugins/.data/dev.faruk.iina-airplay.dev",
+    binDirLookup: { status: 0, stdout: "/plugins/iina-airplay.iinaplugin-dev.iinaplugin-dev/bin" },
+  });
+  p.clickMenu();
+  const sh = p.execs.find((e) => e.bin === "/bin/sh");
+  assert.ok(sh, "no bin dir lookup ran");
+  assert.deepEqual(sh.args.slice(3), ["/plugins", identifierPattern("dev.faruk.iina-airplay.dev")]);
+  assert.ok(!sh.args[1].includes("dev.faruk"), "the identifier must be an argument, not part of the script");
+  await new Promise((r) => setImmediate(r));
+  assert.equal(serves(p)[0].bin, "/plugins/iina-airplay.iinaplugin-dev.iinaplugin-dev/bin/airplay-helper");
 });
 
 test("a broken install names the fix instead of leaking an exec error", async () => {
