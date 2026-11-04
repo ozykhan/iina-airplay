@@ -15,7 +15,7 @@ func TestServerMIMEAndRange(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "index.m3u8"), []byte("#EXTM3U\n"), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.m4s"), []byte("0123456789"), 0o644)
 
-	port, shutdown, err := StartServer(dir, "", "", 0, "")
+	port, shutdown, err := StartServer(dir, "", "", 0, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -59,7 +59,7 @@ func TestServerRewritesMasterPlaylist(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(master), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.vtt"), []byte("WEBVTT\n"), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en", 0, "")
+	port, shutdown, err := StartServer(dir, "English", "en", 0, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -92,7 +92,7 @@ func TestServerRewritesMasterPlaylist(t *testing.T) {
 
 func TestServerMissingMasterFallsThrough(t *testing.T) {
 	dir := t.TempDir()
-	port, shutdown, err := StartServer(dir, "", "", 0, "")
+	port, shutdown, err := StartServer(dir, "", "", 0, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -115,7 +115,7 @@ func TestServerAddsVariantToIncompleteMaster(t *testing.T) {
 	dir := t.TempDir()
 	os.WriteFile(filepath.Join(dir, "master.m3u8"), []byte(ffmpegMasterNoVariant), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "")
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -146,7 +146,7 @@ func TestServerAddsCodecsAndVideoRangeFromInitSegment(t *testing.T) {
 	os.WriteFile(filepath.Join(dir, "init.mp4"), hdrInit(0, 24000, 0), 0o644)
 	os.WriteFile(filepath.Join(dir, "seg_0000.m4s"), mediaSegment(traf(tfhd(1, 1001), trunDurations(1001, 1001))), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "")
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "", nil)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -169,7 +169,7 @@ func TestServerUsesRangeHintWithoutColr(t *testing.T) {
 		trak("soun", audioEntry("ec-3", 0)),
 	), 0o644)
 
-	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "PQ")
+	port, shutdown, err := StartServer(dir, "English", "en", 7_000_000, "PQ", nil)
 	if err != nil {
 		t.Fatal(err)
 	}

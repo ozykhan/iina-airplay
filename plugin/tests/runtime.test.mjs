@@ -598,3 +598,46 @@ test("the syncing OSD stays up for the whole hold, and stops after it", () => {
 
 
 
+
+// Issue #58: the page reports what the TV does into IINA's log, and when the
+// TV has been stuck long enough to reload, the helper is asked (SIGUSR1) for
+// the TV's recent requests.
+const kills = (p) => p.execs.filter((e) => e.bin === "/bin/kill");
+
+test("the page's TV reports land in IINA's log", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM, pid: 777 });
+  p.send("tvLog", { msg: "stopped at 50.0s while playing" });
+  assert.ok(p.logs.includes("[tv] stopped at 50.0s while playing"));
+  assert.equal(kills(p).length, 0, "a plain report doesn't involve the helper");
+  p.send("tvLog", { msg: 42 });
+  p.send("tvLog", null);
+  assert.equal(p.logs.filter((l) => l.startsWith("[tv]")).length, 1);
+});
+
+test("a stuck TV has the serving helper log the TV's recent requests", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.helperSays({ event: "ready", url: STREAM, pid: 777 });
+  p.send("tvLog", { msg: "stuck at 50.0s for 10.5s; reloading the stream there", requests: true });
+  assert.deepEqual(kills(p).map((e) => e.args), [["-USR1", "777"]]);
+  p.helperSays({ event: "packaged" });
+  p.send("tvLog", { msg: "stuck again", requests: true });
+  assert.equal(kills(p).length, 2, "still serving once packaging is done");
+});
+
+test("no signal without a pid from this cast's helper", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.send("tvLog", { msg: "stuck", requests: true });         // not ready yet
+  p.helperSays({ event: "ready", url: STREAM });              // a helper too old to send its pid
+  p.send("tvLog", { msg: "stuck", requests: true });
+  p.helperSays({ event: "ready", url: STREAM, pid: "777" });  // not a number
+  p.send("tvLog", { msg: "stuck", requests: true });
+  assert.equal(kills(p).length, 0);
+  p.helperSays({ event: "ready", url: STREAM, pid: 777 });
+  p.send("stop");
+  p.send("tvLog", { msg: "stuck", requests: true });          // the helper is gone; the pid may be reused
+  assert.equal(kills(p).length, 0);
+});

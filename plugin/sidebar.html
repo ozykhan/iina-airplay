@@ -165,6 +165,15 @@
   // so instead, next to Stop casting.
   var STALL_MS = 1500, STALL_GIVE_UP_MS = 15000;
   var lastPos = -1, lastMovedAt = 0, stalled = false;
+  // An Apple TV froze mid-episode with its spinner up and never came back
+  // until the user stopped, recast and pressed play (issue #58). The helper
+  // was still serving, so a TV stuck for RELOAD_AFTER_MS gets the stream
+  // reloaded at the same spot, once per stall: the user's workaround without
+  // the repackaging. If the TV still doesn't move, the card says so as above.
+  var RELOAD_AFTER_MS = 10000;
+  var stallSince = 0;       // when the current stall began; 0 = not stalled
+  var reloadFrom = null;    // where this stall's reload put the TV, until it plays again
+  var resumeAt = null;      // position to seek to once a reloaded stream has metadata
   var localErr = "";        // page-side media failure, distinct from state.msg
   var primaryAct = "start"; // what #primary does: "start" | "reload" | "pick" | "stop"
   var secondaryAct = null;  // what #secondary does: null | "pick" | "stop"
@@ -175,6 +184,53 @@
   function loadStream(url) {
     v.src = url;
     if (!wantPaused) v.play().catch(function () {});
+  }
+
+  // Load the current stream again in the same element and put the TV back
+  // at pos. The element should keep its AirPlay target across a new src
+  // (the stop/recast that got #58's reporter going again doesn't mention
+  // picking the TV again), but that is unverified on an Apple TV; if the
+  // route does drop, the card falls back to "Ready to send".
+  function reloadAt(pos, play) {
+    resumeAt = pos > 0 ? pos : null;
+    v.src = loadedURL;
+    if (play) v.play().catch(function () {});
+    settleUntil = Date.now() + SETTLE_MS;
+    lastPos = -1; lastMovedAt = Date.now();
+    if (resumeAt !== null) markSeek(resumeAt);
+  }
+
+  // Through main.js into IINA's log (subsystem "AirPlay"), where a bug
+  // report's log comes from; the page's own console only reaches Web
+  // Inspector. `requests` also has the helper log the TV's recent requests.
+  function log(msg, requests) {
+    iina.postMessage("tvLog", requests ? { msg: msg, requests: true } : { msg: msg });
+  }
+  function secs(ms) { return (ms / 1000).toFixed(1) + "s"; }
+
+  // Called on every poll with the position the previous poll saw. A stall
+  // is logged when it starts and when it ends, and reloaded once it has
+  // lasted RELOAD_AFTER_MS. "Ends" means one ordinary step of playback: a
+  // jump (the reload's seek, a user seek) isn't the TV playing again.
+  function watchStall(prevPos) {
+    var now = Date.now(), pos = v.currentTime || 0, step = pos - prevPos;
+    if (stallSince && onTV && !v.paused && !v.seeking && prevPos >= 0 && step > 0 && step < 2) {
+      log("playing again at " + pos.toFixed(1) + "s after " + secs(now - stallSince) +
+          (reloadFrom !== null ? ", after a reload" : ""));
+      stallSince = 0; reloadFrom = null;
+    }
+    if (!stalled) return;
+    if (!stallSince) {
+      stallSince = lastMovedAt;
+      log("stopped at " + pos.toFixed(1) + "s while playing");
+    }
+    if (reloadFrom === null && now - lastMovedAt > RELOAD_AFTER_MS) {
+      reloadFrom = pos;
+      log("stuck at " + pos.toFixed(1) + "s for " + secs(now - lastMovedAt) +
+          "; reloading the stream there", true);
+      reloadAt(pos, true);
+      stalled = false; // the reload's seek is what main.js waits on now
+    }
   }
 
   function applySync(sync) {
@@ -239,6 +295,7 @@
     loadedURL = null; retried = false; onTV = false;
     v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
     seekTarget = null; stalled = false;
+    stallSince = 0; reloadFrom = null; resumeAt = null;
   }
   function showPicker() {
     if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
@@ -351,7 +408,12 @@
     if (!loadedURL) return;                // src cleared by a stop, not a real failure
     if (!retried) {                        // retry exactly once (docs/prototype.md)
       retried = true;
-      loadStream(loadedURL);
+      // Mid-cast, back where the TV was rather than at 0 (where the mirror
+      // would then drag IINA too). On a first load this is a plain reload.
+      // A reload that hasn't landed yet reads 0 here; it knows where it was.
+      var at = resumeAt !== null ? resumeAt : (v.currentTime || 0);
+      log("stream error " + (v.error ? v.error.code : "?") + "; reloading at " + at.toFixed(1) + "s");
+      reloadAt(at, !wantPaused);
     } else {
       var code = v.error ? v.error.code : null;
       localErr = "Stream failed to load (media error " + (code === null ? "?" : code) + ").";
@@ -366,6 +428,15 @@
   v.addEventListener("webkitcurrentplaybacktargetiswirelesschanged", function () {
     onTV = !!v.webkitCurrentPlaybackTargetIsWireless;
     v.muted = !onTV;   // silent on the Mac, audible on the TV
+    if (loadedURL) log(onTV ? "AirPlay to the TV started" : "AirPlay to the TV ended");
+  });
+  v.addEventListener("loadedmetadata", function () {
+    if (resumeAt === null) return;
+    var pos = resumeAt;
+    resumeAt = null;
+    v.currentTime = pos;
+    markSeek(pos);
+    settleUntil = Date.now() + SETTLE_MS;
   });
   v.addEventListener("ended", function () { ended = true; });
   // WebKit deselects every subtitle option on the AVPlayerItem as soon as it
@@ -400,7 +471,9 @@
   setInterval(function () {
     iina.postMessage("getState", {});
     if (casting && loadedURL) {
+      var prevPos = lastPos;
       stalled = onTV && tvStalled();
+      watchStall(prevPos);
       iina.postMessage("tvState", {
         appliedSeq: appliedSeq,
         pos: v.currentTime || 0,

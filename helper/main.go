@@ -114,11 +114,23 @@ func runServe(argv []string) {
 	if fi, serr := os.Stat(c.Source); serr == nil {
 		srcSize = fi.Size()
 	}
-	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, EstimateBandwidth(srcSize, c.Duration), rangeHint)
+	reqs := NewRequestLog()
+	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, EstimateBandwidth(srcSize, c.Duration), rangeHint, reqs)
 	if err != nil {
 		fail(err.Error())
 	}
 	defer shutdown()
+	// The plugin sends SIGUSR1 when the TV has been stuck long enough to
+	// reload it (issue #58), to learn whether the TV was still fetching.
+	// Registered before "ready" announces the pid: SIGUSR1's default action
+	// is to exit.
+	dumpReqs := make(chan os.Signal, 1)
+	signal.Notify(dumpReqs, syscall.SIGUSR1)
+	go func() {
+		for range dumpReqs {
+			fmt.Fprint(os.Stderr, "TV requests, "+reqs.Dump(time.Now()))
+		}
+	}()
 
 	ip, err := LanIP(ipOverride)
 	if err != nil {
@@ -175,7 +187,7 @@ func runServe(argv []string) {
 		case <-readyTick.C:
 			if !ready {
 				if playlistReady() {
-					Emit(os.Stdout, "ready", map[string]any{"url": readyURL})
+					Emit(os.Stdout, "ready", map[string]any{"url": readyURL, "pid": os.Getpid()})
 					ready = true
 					readyTick.Stop()
 				} else if time.Now().After(readyDeadline) {
@@ -189,7 +201,7 @@ func runServe(argv []string) {
 			if !ready {
 				// Job finished before the poll noticed the playlist (tiny file).
 				if playlistReady() {
-					Emit(os.Stdout, "ready", map[string]any{"url": readyURL})
+					Emit(os.Stdout, "ready", map[string]any{"url": readyURL, "pid": os.Getpid()})
 					ready = true
 					readyTick.Stop()
 				} else {

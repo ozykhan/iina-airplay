@@ -199,9 +199,143 @@ test("a TV reporting playing at a frozen position is reported as waiting", () =>
     assert.equal(p.els.headline.textContent, "Playing on TV");
     t += 2000; page.poll(); p.state({ phase: "ready", url: URL_, sync: sync() });
     assert.equal(p.els.headline.textContent, "TV is buffering…");
+    // Stuck past RELOAD_AFTER_MS: the stream is reloaded there once (#58)...
+    t += 16000; page.poll(); p.state({ phase: "ready", url: URL_, sync: sync() });
+    assert.equal(p.els.headline.textContent, "Syncing with TV…");
+    // ...and a TV that still doesn't move is reported as before.
+    t += 1000; page.poll();
     t += 16000; page.poll(); p.state({ phase: "ready", url: URL_, sync: sync() });
     assert.equal(p.els.headline.textContent, "TV isn't responding");
     assert.equal(p.posted.filter(([n]) => n === "tvState").at(-1)[1].waiting, true,
       "still held: lifting it would restart the yank-back loop");
   } finally { Date.now = realNow; }
+});
+
+// Issue #58: an Apple TV froze mid-episode and stayed frozen until the user
+// stopped, recast and pressed play. The page now reloads the stream at the
+// stuck position itself, once per stall, and logs the stall either way.
+function onTVAt(pos) {
+  const p = loadPage();
+  let loads = 0;
+  let src = "";
+  Object.defineProperty(p.video, "src", {
+    get: () => src, set: (u) => { src = u; if (u) loads++; },
+  });
+  p.state({ phase: "ready", url: URL_, sync: sync() });
+  p.video.readyState = 4;
+  p.video.webkitCurrentPlaybackTargetIsWireless = true;
+  p.fire("webkitcurrentplaybacktargetiswirelesschanged");
+  p.video.paused = false; p.video.currentTime = pos;
+  return Object.assign(p, {
+    loads: () => loads,
+    logs: () => p.posted.filter(([n]) => n === "tvLog").map(([, d]) => d),
+  });
+}
+
+function withClock(fn) {
+  const realNow = Date.now;
+  let t = 1000;
+  Date.now = () => t;
+  try { fn((ms) => { t += ms; }); } finally { Date.now = realNow; }
+}
+
+test("a TV stuck for 10s gets the stream reloaded where it stopped, once", () => {
+  const p = onTVAt(1162.4);
+  withClock((advance) => {
+    p.poll();
+    advance(5000); p.poll();
+    assert.equal(p.loads(), 1, "5s of buffering is left alone");
+    advance(6000); p.poll();
+    assert.equal(p.loads(), 2, "reloaded after 10s stuck");
+    assert.equal(p.video.src, URL_);
+    assert.equal(p.video.paused, false, "the reload plays: the TV was playing");
+    const stuck = p.logs().at(-1);
+    assert.match(stuck.msg, /^stuck at 1162\.4s for 11\.0s; reloading the stream there$/);
+    assert.equal(stuck.requests, true, "the helper is asked for the TV's requests");
+    assert.equal(p.posted.filter(([n]) => n === "tvState").at(-1)[1].waiting, true,
+      "IINA stays held while the reload lands");
+    // The new load starts at 0; once it has metadata, the TV goes back.
+    p.video.currentTime = 0;
+    p.fire("loadedmetadata");
+    assert.equal(p.video.currentTime, 1162.4);
+    // Still frozen there: no second reload for the same stall.
+    for (let i = 0; i < 60; i++) { advance(500); p.poll(); }
+    assert.equal(p.loads(), 2);
+  });
+});
+
+test("after a reload the TV plays again, and a later stall can reload again", () => {
+  const p = onTVAt(300);
+  withClock((advance) => {
+    p.poll();
+    advance(11000); p.poll();
+    assert.equal(p.loads(), 2);
+    p.video.currentTime = 0;              // the new load starts at 0...
+    advance(500); p.poll();
+    p.fire("loadedmetadata");             // ...and jumps back: not playback yet
+    advance(500); p.poll();
+    assert.match(p.logs().at(-1).msg, /^stuck at/);
+    p.video.currentTime = 300.5;
+    advance(500); p.poll();
+    assert.equal(p.logs().at(-1).msg, "playing again at 300.5s after 12.5s, after a reload");
+    advance(11000); p.poll();             // stuck again at 301
+    assert.equal(p.loads(), 3);
+  });
+});
+
+test("a stall that clears by itself is logged both ways and not reloaded", () => {
+  const p = onTVAt(50);
+  withClock((advance) => {
+    p.poll();
+    advance(2000); p.poll();
+    assert.equal(p.logs().at(-1).msg, "stopped at 50.0s while playing");
+    assert.equal(p.logs().at(-1).requests, undefined);
+    p.video.currentTime = 50.5;
+    advance(500); p.poll();
+    assert.equal(p.logs().at(-1).msg, "playing again at 50.5s after 2.5s");
+    assert.equal(p.loads(), 1);
+  });
+});
+
+test("a paused TV is never reloaded", () => {
+  const p = onTVAt(50);
+  p.video.paused = true;
+  withClock((advance) => {
+    for (let i = 0; i < 40; i++) { advance(500); p.poll(); }
+  });
+  assert.equal(p.loads(), 1);
+  assert.deepEqual(p.logs().filter((l) => /stopped|stuck/.test(l.msg)), []);
+});
+
+test("a stream error mid-cast reloads at the TV's position, not at 0", () => {
+  const p = onTVAt(600);
+  p.video.error = { code: 2 };
+  p.fire("error");
+  assert.equal(p.loads(), 2);
+  assert.equal(p.logs().at(-1).msg, "stream error 2; reloading at 600.0s");
+  p.video.currentTime = 0;
+  p.fire("loadedmetadata");
+  assert.equal(p.video.currentTime, 600);
+});
+
+test("a reload that fails before landing retries at the same position", () => {
+  const p = onTVAt(700);
+  withClock((advance) => {
+    p.poll();
+    advance(11000); p.poll();             // stuck: reloaded at 700
+  });
+  p.video.currentTime = 0;                // the new load hasn't got metadata yet
+  p.video.error = { code: 2 };
+  p.fire("error");
+  assert.equal(p.loads(), 3);
+  p.fire("loadedmetadata");
+  assert.equal(p.video.currentTime, 700);
+});
+
+test("AirPlay route changes are logged", () => {
+  const p = onTVAt(10);
+  assert.equal(p.logs().at(-1).msg, "AirPlay to the TV started");
+  p.video.webkitCurrentPlaybackTargetIsWireless = false;
+  p.fire("webkitcurrentplaybacktargetiswirelesschanged");
+  assert.equal(p.logs().at(-1).msg, "AirPlay to the TV ended");
 });

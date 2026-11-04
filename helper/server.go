@@ -32,8 +32,9 @@ func init() {
 // HDR stream is announced as SDR, which AVFoundation fails (issue #45).
 // Everything else is a plain file serve. subName/subLang/rangeHint may be
 // empty (no-subs casts never produce a master.m3u8, so the rewrite path
-// simply never runs for them).
-func StartServer(dir, subName, subLang string, bandwidth int, rangeHint string) (int, func(), error) {
+// simply never runs for them). reqs, when not nil, records every request for
+// a stall report (RequestLog).
+func StartServer(dir, subName, subLang string, bandwidth int, rangeHint string, reqs *RequestLog) (int, func(), error) {
 	ln, err := net.Listen("tcp", "0.0.0.0:0")
 	if err != nil {
 		return 0, nil, err
@@ -63,7 +64,7 @@ func StartServer(dir, subName, subLang string, bandwidth int, rangeHint string) 
 		}
 		files.ServeHTTP(w, r)
 	})
-	srv := &http.Server{Handler: handler}
+	srv := &http.Server{Handler: reqs.Wrap(handler)}
 	go srv.Serve(ln)
 	shutdown := func() {
 		ctx, cancel := context.WithTimeout(context.Background(), 2*time.Second)

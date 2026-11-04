@@ -509,6 +509,9 @@ if (typeof iina !== "undefined") {
           var ev = parsed.events[i];
           if (ev.event === "ready") {
             state.phase = "ready"; state.url = ev.url;
+            // The helper's pid, for askHelperForRequests. Lives on `state`,
+            // so it goes away with the cast whenever `state` is replaced.
+            state.helperPid = isValidPid(ev.pid) ? ev.pid : null;
             console.log("[cast] stream ready at " + ev.url);
           }
           else if (ev.event === "progress") { state.pct = ev.pct; }
@@ -530,6 +533,17 @@ if (typeof iina !== "undefined") {
         state = { phase: "error", url: null, pct: 0, msg: String(e) };
       });
     });
+  }
+
+  // SIGUSR1 makes the helper print its recent requests to stderr, which the
+  // serve exec's stderr hook logs. Only while this cast's helper is serving:
+  // the pid came from its own "ready", and `state` is replaced when it ends,
+  // so a pid is never signalled after its helper is gone (SIGUSR1 would kill
+  // an unrelated process that reused it).
+  function askHelperForRequests() {
+    if (state.phase !== "ready" && state.phase !== "packaged") return;
+    if (!isValidPid(state.helperPid)) return; // a helper too old to send one
+    utils.exec("/bin/kill", ["-USR1", String(state.helperPid)]).catch(function () {});
   }
 
   function getIINAPid() {
@@ -579,6 +593,15 @@ if (typeof iina !== "undefined") {
     sidebar.onMessage("stop", function () {
       stopCast();
       sidebar.postMessage("state", stateForPage());
+    });
+    // The page reports what the TV does that a report would need: stalls,
+    // recoveries, reloads, route changes (issue #58). With `requests`, the
+    // TV has been stuck long enough to reload, and the helper is asked to
+    // log the TV's recent requests: still fetching, failing, or gone quiet.
+    sidebar.onMessage("tvLog", function (d) {
+      if (!d || typeof d.msg !== "string") return;
+      console.log("[tv] " + d.msg);
+      if (d.requests) askHelperForRequests();
     });
     // The page's <video> failed to load the stream twice (issue #42). Probe
     // the URL and leave the result on state.diag for the page's next poll.

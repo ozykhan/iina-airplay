@@ -2,6 +2,7 @@ package main
 
 import (
 	"bufio"
+	"bytes"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -11,6 +12,8 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
+	"sync"
+	"syscall"
 	"testing"
 	"time"
 )
@@ -433,4 +436,85 @@ func TestFailedCastSweepsOutDir(t *testing.T) {
 		t.Fatalf("expected an error event, got:\n%s", b)
 	}
 	assertSwept(t, out)
+}
+
+// Issue #58: when the TV freezes, the plugin sends SIGUSR1 and the helper
+// answers on stderr (IINA's log) with the TV's recent requests. The signal
+// must not kill the helper, and "ready" carries the pid to send it to.
+func TestSIGUSR1PrintsRecentRequests(t *testing.T) {
+	bin := buildHelper(t)
+	out := t.TempDir()
+	stub := castingStub(t, out, "trap 'exit 0' TERM\nsleep 60")
+	cmd := exec.Command(bin, "serve",
+		"-source", "/dev/null", "-out", out, "-ffmpeg", stub,
+		"-parent", fmt.Sprint(os.Getpid()), "-duration", "60",
+		"-vcodec", "h264", "-acodec", "aac", "-achannels", "2", "-vmap", "0", "-amap", "1")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	var stderr syncBuffer
+	cmd.Stderr = &stderr
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	t.Cleanup(func() { cmd.Process.Kill(); cmd.Wait() })
+
+	sc := bufio.NewScanner(stdout)
+	var ready map[string]any
+	for sc.Scan() {
+		var ev map[string]any
+		if json.Unmarshal(sc.Bytes(), &ev) == nil && ev["event"] == "ready" {
+			ready = ev
+			break
+		}
+	}
+	if ready == nil {
+		t.Fatal("no ready event")
+	}
+	if pid, _ := ready["pid"].(float64); int(pid) != cmd.Process.Pid {
+		t.Fatalf("ready pid = %v, want %d", ready["pid"], cmd.Process.Pid)
+	}
+	url, _ := ready["url"].(string)
+	resp, err := http.Get(strings.Replace(url, "/index.m3u8", "/seg_0000.m4s", 1))
+	if err != nil {
+		t.Fatal(err)
+	}
+	io.Copy(io.Discard, resp.Body)
+	resp.Body.Close()
+
+	if err := cmd.Process.Signal(syscall.SIGUSR1); err != nil {
+		t.Fatal(err)
+	}
+	deadline := time.Now().Add(5 * time.Second)
+	for !strings.Contains(stderr.String(), "GET /seg_0000.m4s  200") {
+		if time.Now().After(deadline) {
+			t.Fatalf("no request dump on stderr; got %q", stderr.String())
+		}
+		time.Sleep(50 * time.Millisecond)
+	}
+	if !strings.HasPrefix(stderr.String(), "TV requests, last 1 requests, newest first:\n") {
+		t.Fatalf("stderr = %q", stderr.String())
+	}
+	if err := cmd.Process.Signal(syscall.Signal(0)); err != nil {
+		t.Fatalf("SIGUSR1 killed the helper: %v", err)
+	}
+}
+
+// syncBuffer is a bytes.Buffer safe to read while exec's copier writes it.
+type syncBuffer struct {
+	mu sync.Mutex
+	b  bytes.Buffer
+}
+
+func (s *syncBuffer) Write(p []byte) (int, error) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.Write(p)
+}
+
+func (s *syncBuffer) String() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.b.String()
 }
