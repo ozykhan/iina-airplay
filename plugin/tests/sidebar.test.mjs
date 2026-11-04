@@ -339,3 +339,22 @@ test("AirPlay route changes are logged", () => {
   p.fire("webkitcurrentplaybacktargetiswirelesschanged");
   assert.equal(p.logs().at(-1).msg, "AirPlay to the TV ended");
 });
+
+test("the TV's own pauses are logged with the element's state, IINA's are marked", () => {
+  withClock((advance) => {
+    const p = onTVAt(1111.3);
+    p.video.readyState = 1; p.video.networkState = 2;
+    p.video.buffered = { length: 1, end: () => 1111.4 };
+    advance(5000);
+    p.video.paused = true;
+    p.fire("pause");                      // nothing asked for it: the TV did
+    assert.equal(p.logs().at(-1).msg,
+      "pause at 1111.3s; readyState 1, networkState 2, buffered to 1111.4s");
+    p.video.paused = false;
+    p.state({ phase: "ready", url: URL_, sync: sync({ seq: 1, paused: true }) });
+    p.fire("pause");                      // IINA's pause, applied by the page
+    assert.match(p.logs().at(-1).msg, /^pause at 1111\.3s \(sent from IINA\); readyState 1/);
+    p.fire("waiting");
+    assert.match(p.logs().at(-1).msg, /^waiting at 1111\.3s/);
+  });
+});

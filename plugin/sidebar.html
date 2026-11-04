@@ -174,6 +174,7 @@
   var stallSince = 0;       // when the current stall began; 0 = not stalled
   var reloadFrom = null;    // where this stall's reload put the TV, until it plays again
   var resumeAt = null;      // position to seek to once a reloaded stream has metadata
+  var commandedAt = 0;      // when the page itself last played or paused the element
   var localErr = "";        // page-side media failure, distinct from state.msg
   var primaryAct = "start"; // what #primary does: "start" | "reload" | "pick" | "stop"
   var secondaryAct = null;  // what #secondary does: null | "pick" | "stop"
@@ -183,6 +184,7 @@
   // playing on the TV anyway.)
   function loadStream(url) {
     v.src = url;
+    commandedAt = Date.now();
     if (!wantPaused) v.play().catch(function () {});
   }
 
@@ -194,6 +196,7 @@
   function reloadAt(pos, play) {
     resumeAt = pos > 0 ? pos : null;
     v.src = loadedURL;
+    commandedAt = Date.now();
     if (play) v.play().catch(function () {});
     settleUntil = Date.now() + SETTLE_MS;
     lastPos = -1; lastMovedAt = Date.now();
@@ -248,6 +251,7 @@
         markSeek(sync.seekTo.pos);
         initialSeekPending = false;   // an explicit user seek supersedes it
       }
+      if (sync.paused !== v.paused) commandedAt = Date.now();
       if (sync.paused && !v.paused) v.pause();
       else if (!sync.paused && v.paused) v.play().catch(function () {});
       appliedSeq = sync.seq;
@@ -439,6 +443,24 @@
     settleUntil = Date.now() + SETTLE_MS;
   });
   v.addEventListener("ended", function () { ended = true; });
+  // In #58's log the Apple TV's freeze reached the page as a pause, which the
+  // mirror then passed on to IINA like a Siri Remote press. Every play/pause
+  // the TV makes, and every wait for data, is logged with the element's
+  // state, so a log can show how a stall differs from a real pause.
+  function mediaState() {
+    var b = "";
+    try {
+      if (v.buffered.length) b = ", buffered to " + v.buffered.end(v.buffered.length - 1).toFixed(1) + "s";
+    } catch (e) {}
+    return "readyState " + v.readyState + ", networkState " + v.networkState + b;
+  }
+  ["pause", "play", "waiting", "stalled"].forEach(function (name) {
+    v.addEventListener(name, function () {
+      if (!onTV || !loadedURL) return;
+      var ours = Date.now() - commandedAt < 1000 ? " (sent from IINA)" : "";
+      log(name + " at " + (v.currentTime || 0).toFixed(1) + "s" + ours + "; " + mediaState());
+    });
+  });
   // WebKit deselects every subtitle option on the AVPlayerItem as soon as it
   // loads the stream's tracks on the Mac (processMediaSelectionOptions), and
   // a TV picked after that inherits the empty selection: a first cast came up
