@@ -27,6 +27,7 @@ function selectTracks(trackList) {
   if (!audio) return null;
   var r = {
     vcodec: video.codec,
+    vheight: video["demux-h"] || 0,
     acodec: audio.codec,
     achannels: audio["demux-channel-count"] || 2,
     vmap: video["ff-index"],
@@ -43,6 +44,19 @@ function selectTracks(trackList) {
     }
   }
   return r;
+}
+
+// Bit depth from an mpv pixel-format name, for the helper's re-encode branch
+// (10-bit AV1/HDR must stay 10-bit). mpv names the depth after the last "p":
+// yuv420p10, yuv420p10le, p010 (NV12's 10-bit twin), p210, gbrp12. Names with
+// no depth there (yuv420p, nv12, bgra) are 8-bit. 0 means "unknown" — nothing
+// to go on, or a hardware surface name like "videotoolbox" — and the helper
+// treats unknown as 8-bit, the pre-existing behaviour.
+function videoBitDepth(fmt) {
+  if (!fmt || typeof fmt !== "string") return 0;
+  if (fmt === "videotoolbox" || fmt.indexOf("vaapi") === 0) return 0;
+  var m = /p[0-4]?(\d{2})(?:le|be)?$/.exec(fmt);
+  return m ? parseInt(m[1], 10) : 8;
 }
 
 // selectTracks already decided what happens to subtitles; this just names the
@@ -295,6 +309,7 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
+    videoBitDepth: videoBitDepth,
     subtitleLabel: subtitleLabel,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
@@ -511,6 +526,12 @@ if (typeof iina !== "undefined") {
     var lanIP = lanIPOverride(preferences.get("lanIP"));
     var vrange = videoRangeHint(mpv.getString("video-params/gamma"));
     var duration = mpv.getNumber("duration") || 0;
+    // With hardware decoding pixelformat is the surface type ("videotoolbox")
+    // and the real layout is in hw-pixelformat; with software decoding (all
+    // AV1 on pre-M3 Macs) hw-pixelformat is absent. Both return null, not
+    // throw, when unavailable.
+    var vdepth = videoBitDepth(mpv.getString("video-params/hw-pixelformat")) ||
+                 videoBitDepth(mpv.getString("video-params/pixelformat"));
     var outDir = utils.resolvePath("@tmp/hls");
     var gen = ++castGen;
     stdoutRest = "";
@@ -535,6 +556,7 @@ if (typeof iina !== "undefined") {
         "-parent", String(pid),
         "-duration", String(duration),
         "-vcodec", tracks.vcodec, "-acodec", tracks.acodec,
+        "-vdepth", String(vdepth), "-vheight", String(tracks.vheight),
         "-achannels", String(tracks.achannels),
         "-vmap", String(tracks.vmap), "-amap", String(tracks.amap),
       ];

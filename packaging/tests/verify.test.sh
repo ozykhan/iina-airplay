@@ -22,7 +22,7 @@ DUMMY_SRC_ROOT="$TMP/no-such-plugin-source"
 
 # Builds a minimal package; callers mutate the staging dir via the hook first.
 # Includes every file verify.sh now asserts is present (sidebar.html, preferences.html,
-# bin/VERSIONS, bin/ffmpeg-LICENSE.md, bin/COPYING.LGPLv2.1) so a hook that
+# bin/VERSIONS, bin/ffmpeg-LICENSE.md, bin/COPYING.LGPLv2.1, bin/COPYING.dav1d) so a hook that
 # targets one specific check doesn't also trip an unrelated presence check.
 make_pkg() {
   # Split declarations — see the bash 3.2 note in Global Constraints.
@@ -45,6 +45,8 @@ JSON
   printf '# FFmpeg\n\nTest fixture license notice.\n' > "$d/src/bin/ffmpeg-LICENSE.md"
   printf 'GNU LESSER GENERAL PUBLIC LICENSE\nVersion 2.1, test fixture text.\n' \
     > "$d/src/bin/COPYING.LGPLv2.1"
+  printf 'Copyright (c) VideoLAN and dav1d authors. Test fixture text.\n' \
+    > "$d/src/bin/COPYING.dav1d"
   "$hook" "$d/src"
   ( cd "$d/src" && zip -q -r "$d/pkg.iinaplgz" . )
   echo "$d/pkg.iinaplgz"
@@ -73,6 +75,7 @@ drop_main()      { rm -f "$1/main.js"; }
 drop_sidebar()   { rm -f "$1/sidebar.html"; }
 drop_prefs()     { rm -f "$1/preferences.html"; }
 drop_copying()   { rm -f "$1/bin/COPYING.LGPLv2.1"; }
+drop_dav1d_copying() { rm -f "$1/bin/COPYING.dav1d"; }
 
 # A real Mach-O, ad-hoc signed, then corrupted after signing (bytes appended).
 # `codesign -dv` alone would not catch this — it just prints the signature
@@ -116,6 +119,7 @@ expect_fail "missing entry file"       "$(make_pkg noentry    drop_main)"       
 expect_fail "missing sidebar.html"     "$(make_pkg nosidebar  drop_sidebar)"      "sidebar.html"
 expect_fail "missing preferences.html" "$(make_pkg noprefs    drop_prefs)"        "preferences.html"
 expect_fail "missing LGPL license copy" "$(make_pkg nocopying drop_copying)"      "COPYING"
+expect_fail "missing dav1d license copy" "$(make_pkg nodav1dcopying drop_dav1d_copying)" "COPYING.dav1d"
 expect_fail "ffmpeg stand-in trips the encoder assertions" \
   "$(make_pkg fakeffmpeg fake_ffmpeg_binary)" "encoder"
 

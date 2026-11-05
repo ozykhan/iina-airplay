@@ -11,6 +11,7 @@ import (
 	"os/exec"
 	"path/filepath"
 	"regexp"
+	"slices"
 	"strconv"
 	"strings"
 	"testing"
@@ -93,6 +94,84 @@ func makeFixture(t *testing.T, ffmpeg string) string {
 		t.Fatalf("fixture: %v\n%s", err, out)
 	}
 	return p
+}
+
+// makeAV1Fixture synthesizes a short 10-bit AV1 MKV — the shape of most AV1
+// releases. Needs an AV1 encoder in the system ffmpeg (Homebrew's has both).
+func makeAV1Fixture(t *testing.T, ffmpeg string) string {
+	t.Helper()
+	enc, _ := exec.Command(ffmpeg, "-hide_banner", "-encoders").Output()
+	var codec []string
+	switch {
+	case strings.Contains(string(enc), "libsvtav1"):
+		codec = []string{"-c:v", "libsvtav1", "-preset", "12"}
+	case strings.Contains(string(enc), "libaom-av1"):
+		codec = []string{"-c:v", "libaom-av1", "-cpu-used", "8", "-row-mt", "1"}
+	default:
+		if os.Getenv("IINA_AIRPLAY_FFMPEG") != "" {
+			t.Fatal("system ffmpeg has no AV1 encoder (libsvtav1 or libaom-av1) to author the AV1 fixture; install Homebrew's ffmpeg")
+		}
+		t.Skip("system ffmpeg has no AV1 encoder; skipping AV1 decode check")
+	}
+	p := filepath.Join(t.TempDir(), "av1.mkv")
+	args := []string{"-hide_banner", "-loglevel", "error", "-y",
+		"-f", "lavfi", "-i", "testsrc2=duration=2:size=640x360:rate=25",
+		"-pix_fmt", "yuv420p10le"}
+	args = append(args, codec...)
+	if out, err := exec.Command(ffmpeg, append(args, p)...).CombinedOutput(); err != nil {
+		t.Fatalf("AV1 fixture: %v\n%s", err, out)
+	}
+	return p
+}
+
+// AV1 is where "the decoder is listed" and "the decoder works" part ways.
+// ffmpeg's native av1 decoder is hardware-only and fails every frame without
+// a hwaccel, yet it satisfies verify.sh's `-decoders | grep av1` on its own.
+// Run BuildArgs' real input and video options through the ffmpeg under test
+// on a 10-bit AV1 file and check what comes out is HEVC Main 10 at 10 bits.
+// The bundled build has no null muxer and no software video encoder, so the
+// output is a short mp4 from hevc_videotoolbox itself.
+func TestRealFFmpegDecodesAV1TenBit(t *testing.T) {
+	ffmpeg := findFFmpeg(t)
+	fixture := makeAV1Fixture(t, findSystemFFmpeg(t))
+	c := JobConfig{Source: fixture, OutDir: t.TempDir(), VCodec: "av1", VDepth: 10}
+	args := BuildArgs(c)
+	src := slices.Index(args, fixture)
+	enc := slices.Index(args, "hevc_videotoolbox")
+	aud := slices.Index(args, "-c:a")
+	if src < 0 || enc < 1 || aud < enc {
+		t.Fatalf("unexpected BuildArgs shape: %q", args)
+	}
+	out := filepath.Join(t.TempDir(), "av1-to-hevc.mp4")
+	run := append(slices.Clone(args[:src+1]), "-map", "0:0")
+	run = append(run, args[enc-1:aud]...) // -c:v hevc_videotoolbox ... -pix_fmt p010le
+	run = append(run, "-frames:v", "20", "-f", "mp4", out)
+	res, err := exec.Command(ffmpeg, run...).CombinedOutput()
+	log := string(res)
+	if err != nil {
+		for _, bad := range []string{"Unknown decoder", "hardware accelerated AV1", "Missing Sequence Header", "Error submitting packet to decoder"} {
+			if strings.Contains(log, bad) {
+				t.Fatalf("ffmpeg under test cannot decode 10-bit AV1 with the pipeline's input options: %v\n%s", err, log)
+			}
+		}
+		if strings.Contains(log, "Unknown encoder") {
+			// Not macOS: ffmpeg rejects the output before decoding anything.
+			t.Skipf("hevc_videotoolbox does not exist in this ffmpeg (not macOS); AV1 path not exercised:\n%s", log)
+		}
+		if strings.Contains(log, "compression session") || strings.Contains(log, "Error while opening encoder") {
+			// The encoder only opens after the first frame decodes, so AV1
+			// decoding is proven; VideoToolbox itself is unavailable here
+			// (non-macOS, or a VM without the hardware encoder).
+			t.Skipf("AV1 decoded, but hevc_videotoolbox is unavailable here; output check skipped:\n%s", log)
+		}
+		t.Fatalf("AV1 re-encode failed: %v\n%s", err, log)
+	}
+	probe, _ := exec.Command(ffmpeg, "-hide_banner", "-i", out).CombinedOutput()
+	for _, want := range []string{"hevc (Main 10)", "hvc1", "yuv420p10le"} {
+		if !strings.Contains(string(probe), want) {
+			t.Fatalf("re-encoded AV1 output lacks %q — not a 10-bit HEVC Main 10 stream:\n%s", want, probe)
+		}
+	}
 }
 
 func TestRealFFmpegEndToEnd(t *testing.T) {

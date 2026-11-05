@@ -35,9 +35,13 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
     mpv: {
-      getString: (k) => (mpvCalls.push(k), k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv")
-                       : k === "video-params/gamma" ? (opts.gamma !== undefined ? opts.gamma : "bt.1886")
-                       : null),
+      getString: (k) => {
+        mpvCalls.push(k);
+        if (k === "path") return opts.path !== undefined ? opts.path : "/movies/a.mkv";
+        if (k === "video-params/gamma") return opts.gamma !== undefined ? opts.gamma : "bt.1886";
+        if (opts.videoParams && k in opts.videoParams) return opts.videoParams[k];
+        return null;
+      },
       getNumber: (k) => (mpvCalls.push(k), k === "pid" ? 4321 : k === "duration" ? 120
                        : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
       getNative: (k) => (mpvCalls.push(k), trackList),
@@ -600,6 +604,41 @@ test("a probe that settles after the cast was stopped is dropped", async () => {
   await tick();
   p.send("getState");
   assert.equal(p.state().diag, null);
+});
+
+// ---- AV1 / 10-bit: what startCast tells the helper about the video ----
+
+const argAfter = (args, flag) => args[args.indexOf(flag) + 1];
+
+test("a software-decoded 10-bit AV1 cast passes -vdepth 10 and the height", () => {
+  const p = loadPlugin({
+    tracks: [
+      { type: "video", selected: true, codec: "av1", "ff-index": 0, "demux-h": 2160 },
+      { type: "audio", selected: true, codec: "opus", "ff-index": 1, "demux-channel-count": 2 },
+    ],
+    videoParams: { "video-params/pixelformat": "yuv420p10" }, // no hw-pixelformat: software decode
+  });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(argAfter(args, "-vcodec"), "av1");
+  assert.equal(argAfter(args, "-vdepth"), "10");
+  assert.equal(argAfter(args, "-vheight"), "2160");
+});
+
+test("a hardware-decoded source reads its depth from hw-pixelformat", () => {
+  const p = loadPlugin({
+    videoParams: { "video-params/pixelformat": "videotoolbox", "video-params/hw-pixelformat": "p010" },
+  });
+  p.clickMenu();
+  assert.equal(argAfter(serves(p)[0].args, "-vdepth"), "10");
+});
+
+test("unknown depth and height are sent as 0, not omitted", () => {
+  const p = loadPlugin(); // fixture video has no demux-h, mpv reports no pixel format
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(argAfter(args, "-vdepth"), "0");
+  assert.equal(argAfter(args, "-vheight"), "0");
 });
 
 // ---- quitting IINA: never touch mpv after the window starts closing ----

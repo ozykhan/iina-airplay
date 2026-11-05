@@ -65,6 +65,11 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   SDR variant; tvOS itself is untested. CoreMedia logs why it rejects a
   master (CONTRIBUTING.md, "What you cannot test without hardware").
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
+- **ffmpeg's native `av1` decoder is hardware-only.** Without a hwaccel it
+  fails every frame ("Your platform doesn't support hardware accelerated AV1
+  decoding"), yet it is listed in `ffmpeg -decoders` of every build. AV1 needs
+  `libdav1d`, statically linked by `packaging/build-ffmpeg.sh`; `helper/job.go`
+  names it explicitly for AV1 sources.
 - **Never call `mpv.*` after `iina.window-will-close`.** On quit IINA closes
   every window, then destroys the mpv core and leaves the plugin API's handle
   nil; any `mpv.*` call after that segfaults IINA natively (try/catch cannot
