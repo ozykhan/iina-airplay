@@ -338,6 +338,24 @@ if (typeof iina !== "undefined") {
   // everything that touches mpv runs in onMessage/menu context.
   var mirror = null;
 
+  // IINA destroys the mpv core while quitting and leaves the plugin API's
+  // handle nil, but the sidebar page keeps polling "getState" through the
+  // quit. mpv.* on that nil handle segfaults inside IINA (mpv_get_property
+  // reading address 0x48) — a native crash, not a JS exception, so try/catch
+  // cannot help. IINA closes every window before it shuts players down, so
+  // window-will-close is the last point where mpv is certainly alive.
+  //
+  // window-will-close also fires on an ordinary close (Cmd-W), after which
+  // IINA keeps running and the next file reuses this same player, plugin
+  // instance and window — and window-loaded never fires again. So the flag
+  // clears on iina.file-loaded: a file can only load into a live mpv core.
+  // Until then, answer from the last snapshot and leave mpv alone; a mute
+  // restore that came due meanwhile is deferred to that point.
+  var playerGone = false;
+  var pendingMute = null; // savedMute owed to mpv once it is live again
+  var lastSeen = { duration: 0, subs: subtitleLabel(null) };
+  event.on("iina.window-will-close", function () { playerGone = true; });
+
   // Every post to the page goes through this so the page always sees the live
   // sync block alongside the pipeline state.
   function stateForPage() {
@@ -346,12 +364,18 @@ if (typeof iina !== "undefined") {
     // before the first cast — exactly when the user is deciding whether to
     // cast — and would go stale if the subtitle track changed mid-session.
     // Safe to read mpv here: every caller is a sidebar.onMessage handler,
-    // which IINA runs on the main thread.
+    // which IINA runs on the main thread — unless the player is going away.
+    if (!playerGone) {
+      lastSeen = {
+        duration: mpv.getNumber("duration") || 0,
+        subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
+      };
+    }
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
       diag: state.diag || null,
-      duration: mpv.getNumber("duration") || 0,
-      subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
+      duration: lastSeen.duration,
+      subs: lastSeen.subs,
       sync: mirror === null ? null : {
         seq: mirror.seq, paused: mirror.paused,
         seekTo: mirror.seekTo, startPos: mirror.startPos,
@@ -361,7 +385,8 @@ if (typeof iina !== "undefined") {
 
   function endMirror() {
     if (mirror === null) return;
-    mpv.set("mute", mirror.savedMute);
+    if (playerGone) pendingMute = mirror.savedMute; // restored on file-loaded
+    else mpv.set("mute", mirror.savedMute);
     mirror = null;
   }
 
@@ -373,16 +398,21 @@ if (typeof iina !== "undefined") {
   }
 
   event.on("mpv.pause.changed", function () {
-    if (mirror === null) return;
+    if (mirror === null || playerGone) return;
     mirror = mirrorOnMpvPause(mirror, !!mpv.getFlag("pause"));
   });
   event.on("mpv.seek", function () {
-    if (mirror === null) return;
+    if (mirror === null || playerGone) return;
     mirror = mirrorOnMpvSeek(mirror, mpv.getNumber("time-pos") || 0, Date.now());
   });
   // A new file invalidates the whole cast: the stream on the TV is the old
   // file. file-loaded is an app event (main thread), so stopCast is safe here.
   event.on("iina.file-loaded", function () {
+    playerGone = false; // a file only loads into a live mpv core
+    if (pendingMute !== null) {
+      mpv.set("mute", pendingMute); // a cast ended while the window was closed
+      pendingMute = null;
+    }
     if (mirror === null) return;
     stopCast();
   });
@@ -427,6 +457,7 @@ if (typeof iina !== "undefined") {
   }
 
   function startCast() {
+    if (playerGone) return; // every line below reads mpv
     reapMirror(); // a helper-initiated teardown may have left a stale mirror
                   // un-reaped (only the getState poll normally does that); a
                   // restart must not let newMirror() capture that stale
@@ -616,7 +647,7 @@ if (typeof iina !== "undefined") {
     sidebar.onMessage("tvState", function (tv) {
       reapMirror(); // a helper-initiated teardown may have left a stale mirror
                     // un-reaped; don't mpv.set against a dead stream.
-      if (mirror === null || !tv) return;
+      if (mirror === null || !tv || playerGone) return;
       var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
                               !!mpv.getFlag("pause"), Date.now());
       mirror = r.m;
