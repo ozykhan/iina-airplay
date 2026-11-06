@@ -29,6 +29,7 @@ type JobConfig struct {
 	SubMap   string
 	SubLang  string
 	SubName  string
+	SubCodec string // mpv codec name; ass/ssa get PrepareASS
 	Duration float64
 }
 

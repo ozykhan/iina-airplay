@@ -23,6 +23,8 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
   the Siri Remote comes back the other way.
 - **Your subtitles come along.** The text track you selected in IINA (embedded or
   external SRT/ASS) is carried as a WebVTT rendition the TV shows through its own menu.
+  ASS keeps its words, not its look: dialogue and static signs come through as plain
+  text, while frame-by-frame typesetting and vector drawings are left out.
 - **Nothing to install first.** A pinned LGPL ffmpeg build and a small Go helper ship
   inside the package. No Homebrew, no runtime downloads, works offline.
 
