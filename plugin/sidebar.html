@@ -126,7 +126,7 @@
     </div>
   </div>
 </div>
-<video id="v" autoplay muted playsinline x-webkit-airplay="allow"></video>
+<video id="v" muted playsinline x-webkit-airplay="allow"></video>
 
 <script>
   var v = document.getElementById("v");
@@ -140,6 +140,8 @@
   var primary = document.getElementById("primary");
   var secondary = document.getElementById("secondary");
   var loadedURL = null;
+  var castSeen = null;      // main.js's cast id; a change mid-cast means a new file
+  var wantPaused = false;   // IINA's pause state as last applied; a (re)load honours it
   var retried = false;      // known WebKit flake: first load may fail once
   var airplayAvailable = false;
   var onTV = false;
@@ -147,22 +149,55 @@
   var appliedSeq = 0;
   var initialSeekPending = false;
   var ended = false;
+  // After the page drives the element, the receiver takes a moment to act on
+  // it; until then its reported position/pause state is stale (main.js
+  // mirrorOnTvState). Slow receivers (LG's AirPlay app) may want more.
+  var SETTLE_MS = 2000;
+  var settleUntil = 0;
+  // A seek isn't done until the TV plays from its target: until then main.js
+  // holds IINA paused and the card says so. Capped, so a TV that never
+  // reports the seek can't hold IINA forever (a stall is handled below).
+  var SEEK_HOLD_MS = 6000;
+  var seekTarget = null, seekUntil = 0;
+  // The TV can report "playing" while stuck on one position (31s at 32.35s
+  // in the field). Unmoving for STALL_MS counts as waiting, like a seek.
+  // That hold has no cap: lifting it would just restart the yank-back loop
+  // against a TV that is still frozen. Past STALL_GIVE_UP_MS the card says
+  // so instead, next to Stop casting.
+  var STALL_MS = 1500, STALL_GIVE_UP_MS = 15000;
+  var lastPos = -1, lastMovedAt = 0, stalled = false;
   var localErr = "";        // page-side media failure, distinct from state.msg
   var primaryAct = "start"; // what #primary does: "start" | "reload" | "pick" | "stop"
   var secondaryAct = null;  // what #secondary does: null | "pick" | "stop"
 
+  // A stream starts playing only if IINA is playing. (The element used to
+  // autoplay every load, so a new episode opened in a paused IINA started
+  // playing on the TV anyway.)
+  function loadStream(url) {
+    v.src = url;
+    if (!wantPaused) v.play().catch(function () {});
+  }
+
   function applySync(sync) {
     if (!sync || !loadedURL) return;
-    if (sync.seq > appliedSeq) {
+    // Not before the element has the stream (HAVE_METADATA): a pause or seek
+    // issued while it's still loading can be dropped on the way to the TV,
+    // yet v.paused/currentTime then report it as done, so main.js sees the
+    // two in step and never corrects. Holding back the ack keeps the command
+    // pending until it can land.
+    if (sync.seq > appliedSeq && v.readyState >= 1) {
       // seekTo carries its own seq so a later pause command doesn't replay a
       // seek this page already performed.
       if (sync.seekTo && sync.seekTo.seq > appliedSeq) {
         v.currentTime = sync.seekTo.pos;
+        markSeek(sync.seekTo.pos);
         initialSeekPending = false;   // an explicit user seek supersedes it
       }
       if (sync.paused && !v.paused) v.pause();
       else if (!sync.paused && v.paused) v.play().catch(function () {});
       appliedSeq = sync.seq;
+      wantPaused = sync.paused;
+      settleUntil = Date.now() + SETTLE_MS;
     }
     if (initialSeekPending && onTV && sync.startPos > 0) {
       // Best-effort (spec): jump to where IINA was, but only once packaging
@@ -173,15 +208,38 @@
             v.seekable.end(v.seekable.length - 1) >= sync.startPos) {
           v.currentTime = sync.startPos;
           initialSeekPending = false;
+          settleUntil = Date.now() + SETTLE_MS;
+          markSeek(sync.startPos);
         }
       } catch (e) { initialSeekPending = false; }
     }
+  }
+
+  function markSeek(pos) { seekTarget = pos; seekUntil = Date.now() + SEEK_HOLD_MS; }
+  // Playing just past the target means the seek has landed — not merely
+  // parked on it (WebKit may report the target while the TV still buffers),
+  // and not far from it (the TV still reporting where it was before a seek
+  // back). Paused, there's no playback to wait for once seeking clears.
+  function tvSeeking() {
+    if (v.seeking) return true;
+    if (seekTarget === null) return false;
+    var ahead = (v.currentTime || 0) - seekTarget;
+    if (!v.paused && Date.now() < seekUntil && !(ahead >= 0.25 && ahead < 3)) return true;
+    seekTarget = null;
+    return false;
+  }
+
+  function tvStalled() {
+    var now = Date.now(), pos = v.currentTime || 0;
+    if (v.paused || v.seeking || pos !== lastPos) { lastPos = pos; lastMovedAt = now; return false; }
+    return now - lastMovedAt > STALL_MS;
   }
 
   function teardownLocal() {
     v.pause(); v.removeAttribute("src"); v.load();
     loadedURL = null; retried = false; onTV = false;
     v.muted = true; appliedSeq = 0; ended = false; initialSeekPending = false;
+    seekTarget = null; stalled = false;
   }
   function showPicker() {
     if (v.webkitShowPlaybackTargetPicker) v.webkitShowPlaybackTargetPicker();
@@ -201,6 +259,16 @@
       // drop the stream locally too, or the element keeps AirPlaying a corpse.
       teardownLocal();
     }
+    if (s.cast !== castSeen) {
+      castSeen = s.cast;
+      if (casting && loadedURL) {
+        // A new cast replaced this one (the next episode): forget the old
+        // stream, whose helper is gone, but leave the element and its AirPlay
+        // route alone until the new URL is ready to load into it.
+        loadedURL = null; retried = false; appliedSeq = 0; ended = false;
+        initialSeekPending = false; seekTarget = null; stalled = false;
+      }
+    }
     applySync(s.sync);
     present(s);
     if ((s.phase === "ready" || s.phase === "packaged") && s.url && s.url !== loadedURL) {
@@ -210,8 +278,8 @@
       // initial paused snapshot, and applySync's `sync.seq > appliedSeq` gate
       // would otherwise never let it through, autoplaying over a paused mpv.
       appliedSeq = -1; ended = false; initialSeekPending = true;
-      v.src = s.url;
-      v.play().catch(function () {});
+      wantPaused = !!(s.sync && s.sync.paused);
+      loadStream(s.url);
     }
   }
 
@@ -246,7 +314,12 @@
             secondary: "Cancel", sact: "stop" };
     } else if (onTV) {
       var pos = v.currentTime || 0;
-      r = { dot: "live", headline: "Playing on TV", sub: subs.label,
+      var stuck = stalled && Date.now() - lastMovedAt > STALL_GIVE_UP_MS;
+      var status = seekTarget !== null ? "Syncing with TV…"
+                 : stuck ? "TV isn't responding"
+                 : stalled ? "TV is buffering…" : "Playing on TV";
+      r = { dot: stuck ? "bad" : status === "Playing on TV" ? "live" : "busy",
+            headline: status, sub: subs.label,
             warn: subs.warn, meter: true, done: false,
             pct: s.duration > 0 ? (pos / s.duration) * 100 : 0,
             primary: "Stop casting", act: "stop", accent: false, off: false,
@@ -289,8 +362,7 @@
     if (!loadedURL) return;                // src cleared by a stop, not a real failure
     if (!retried) {                        // retry exactly once (docs/prototype.md)
       retried = true;
-      v.src = loadedURL;
-      v.play().catch(function () {});
+      loadStream(loadedURL);
     } else {
       var code = v.error ? v.error.code : null;
       localErr = "Stream failed to load (media error " + (code === null ? "?" : code) + ").";
@@ -339,12 +411,15 @@
   setInterval(function () {
     iina.postMessage("getState", {});
     if (casting && loadedURL) {
+      stalled = onTV && tvStalled();
       iina.postMessage("tvState", {
         appliedSeq: appliedSeq,
         pos: v.currentTime || 0,
         paused: v.paused,
         wireless: onTV,
         ended: ended,
+        settling: v.seeking || Date.now() < settleUntil,
+        waiting: tvSeeking() || stalled,
       });
     }
   }, 500);
