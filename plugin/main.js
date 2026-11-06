@@ -227,6 +227,7 @@ function newMirror(startPos, savedMute, paused) {
     savedMute: savedMute, // mpv mute flag to restore on teardown
     expectMpvPause: null, // swallow the next pause.changed that echoes our own mpv.set
     lastSetPos: null,     // {pos, at} of our last programmatic time-pos set (echo suppression)
+    holding: false,       // mpv paused by us while the TV catches up with a seek
   };
 }
 
@@ -266,20 +267,45 @@ function mirrorOnMpvSeek(m, mpvPos, now) {
 
 // The page reported TV state. Decides what (if anything) to push into mpv.
 // While commands are in flight (appliedSeq < seq) the TV state is stale, so
-// nothing is reconciled against it — not even drift. ended only tears the
+// nothing is reconciled against it — not even drift. The same goes while the
+// page reports `settling`: it has just issued a command (or the element is
+// mid-seek), and for a moment afterwards currentTime still reads the old
+// position and a late pause/play echo from the receiver can flip v.paused.
+// Reconciling then snapped IINA back to where it was seeked from, and turned
+// rapid pause/play into a ping-pong. ended only tears the
 // cast down once the TV is actually the one playing: a short file's LOCAL
 // (muted, hidden) playback ending before the user ever picks a TV must not
 // kill the cast. An acked seekTo is cleared as soon as it's acked, even
 // before wireless playback starts, so a pre-wireless user seek doesn't leave
 // a stale command sitting in the sync block.
 function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
-  var out = { m: m, setMpvPos: null, setMpvPaused: null, teardown: false };
-  if (tvState.ended && tvState.wireless) { out.teardown = true; return out; }
   var n = Object.assign({}, m);
+  var out = { m: n, setMpvPos: null, setMpvPaused: null, teardown: false };
+  // While the TV isn't advancing (tvState.waiting: still landing a seek, or
+  // "playing" but stuck buffering) mpv is held paused, so IINA waits for the
+  // TV instead of running ahead and being yanked back every couple of
+  // seconds. The hold is our own pause: expectMpvPause
+  // keeps both edges from becoming commands, and n.paused never changes.
+  function release() {
+    if (!n.holding) return;
+    n.holding = false;
+    if (!n.paused && mpvPaused) { n.expectMpvPause = false; out.setMpvPaused = false; }
+  }
+  // Released on the way out too: if the cast carries over to the next
+  // episode, mpv must play on to reach it.
+  if (tvState.ended && tvState.wireless) { release(); out.teardown = true; return out; }
   var acked = tvState.appliedSeq >= m.seq;
   if (acked) n.seekTo = null;
-  out.m = n;
-  if (!tvState.wireless || !acked) return out; // nothing on the TV yet, or a command is in flight: no clock to follow
+  if (!tvState.wireless) { release(); return out; }
+  if (!acked) return out;
+  if (tvState.waiting) {
+    if (!n.holding && !n.paused && !mpvPaused) {
+      n.holding = true; n.expectMpvPause = true; out.setMpvPaused = true;
+    }
+    return out;
+  }
+  release();
+  if (tvState.settling) return out; // no settled TV clock to follow yet
   if (tvState.paused !== n.paused) {      // TV-remote initiated: mirror into mpv
     n.paused = tvState.paused;
     n.expectMpvPause = tvState.paused;
@@ -321,7 +347,7 @@ if (typeof module !== "undefined") {
 if (typeof iina !== "undefined") {
   var core = iina.core, mpv = iina.mpv, menu = iina.menu, sidebar = iina.sidebar,
       utils = iina.utils, file = iina.file, console = iina.console, event = iina.event,
-      preferences = iina.preferences;
+      preferences = iina.preferences, overlay = iina.overlay;
 
   var state = { phase: "idle", url: null, pct: 0, msg: null };
   var stdoutRest = "";
@@ -349,6 +375,8 @@ if (typeof iina !== "undefined") {
     // which IINA runs on the main thread.
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
+      cast: castGen,
+      hideVideo: !!preferences.get("hideVideo"),
       diag: state.diag || null,
       duration: mpv.getNumber("duration") || 0,
       subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
@@ -359,10 +387,105 @@ if (typeof iina !== "undefined") {
     };
   }
 
+  // "Hide video in IINA" (the sidebar switch, preference hideVideo): while
+  // the TV is playing, IINA shows the cast status instead of a muted copy of
+  // the video, so the cast reads as a cast, not a mirror. mpv keeps playing:
+  // the sync needs its clock, and the user's controls still drive it.
+  //
+  // The overlay itself stays transparent. IINA puts the plugin overlay above
+  // its floating control bar, so an opaque cover hid the controls. mpv blanks
+  // the video instead (blankVideo). The overlay only draws the status.
+  var OVERLAY_CSS =
+    "html, body { margin: 0; height: 100%; background: transparent; }" +
+    "#content { height: 100%; display: flex; flex-direction: column; gap: 10px;" +
+    " align-items: center; justify-content: center;" +
+    " text-shadow: 0 1px 3px rgba(0, 0, 0, 0.8);" +
+    " color: rgba(255, 255, 255, 0.55); font-size: 15px; font-weight: 500; }" +
+    "#content svg { width: 44px; height: 44px; }";
+  var OVERLAY_ICON =
+    '<svg viewBox="0 0 24 24" fill="none" aria-hidden="true"><rect x="2.4" y="3.4" width="19.2" height="13" rx="2.6" stroke="currentColor" stroke-width="1.6"/><path d="M12 14.4 17 21H7z" fill="currentColor"/></svg>';
+  var overlayReady = false, overlayShown = false, overlayLabel = "", tvWireless = false;
+  // video-zoom is log2: -20 (mpv's minimum) draws the video at a millionth
+  // of its size, i.e. not at all. Subtitles are drawn at window size
+  // regardless (sub-scale-by-window doesn't reach ASS), so blend-subtitles
+  // =video draws them into the frame, where they shrink with it. IINA
+  // observes neither, so no OSD flashes, unlike brightness/contrast or
+  // sub-visibility. video-zoom is kept out of mpv's resume file while it's
+  // ours (skipResume), or a file closed with the video hidden reopens black.
+  var savedView = null;
+  function blankVideo(on) {
+    if (on) {
+      savedView = { zoom: mpv.getNumber("video-zoom") || 0,
+                    blend: mpv.getString("blend-subtitles") || "no" };
+      skipResume("video-zoom");
+      mpv.set("video-zoom", -20);
+      mpv.set("blend-subtitles", "video");
+    } else if (savedView !== null) {
+      mpv.set("video-zoom", savedView.zoom);
+      mpv.set("blend-subtitles", savedView.blend);
+      unskipResume("video-zoom");
+      savedView = null;
+    }
+  }
+
+  function overlayStatus() {
+    if (mirror === null) return "";
+    if (mirror.holding) return "Syncing with TV…";
+    return mirror.paused ? "Paused on TV" : "Playing on TV";
+  }
+  function updateOverlay() {
+    var want = !!preferences.get("hideVideo") && mirror !== null && tvWireless;
+    if (want && !overlayReady) {
+      try {
+        overlay.simpleMode(); // throws until the player window exists
+        overlay.setStyle(OVERLAY_CSS);
+        overlayReady = true;
+      } catch (e) { return; }
+    }
+    var label = overlayStatus();
+    if (want && label !== overlayLabel) {
+      overlay.setContent(OVERLAY_ICON + "<div>" + label + "</div>");
+      overlayLabel = label;
+    }
+    if (want !== overlayShown) {
+      if (want) overlay.show(); else overlay.hide();
+      blankVideo(want);
+      overlayShown = want;
+    }
+  }
+
+  // Drops the mirror without restoring mute. A hold is our own pause, and
+  // mpv's pause outlives both the cast and the file, so it's lifted here.
+  function dropMirror() {
+    if (mirror.holding && !mirror.paused) mpv.set("pause", false);
+    mirror = null;
+  }
+
+  // mpv's resume file (watch later) saves mute, among others, with each
+  // file. Our cast-time mute must not outlive the cast: a file closed
+  // mid-cast (the next episode, IINA quitting) would reopen muted. So a
+  // property we're holding is taken off watch-later-options until we let go.
+  // `skipped` remembers whether it was on the list, so a list the user
+  // trimmed isn't widened on the way back.
+  var skipped = {};
+  function skipResume(prop) {
+    if (prop in skipped) return;
+    skipped[prop] = (mpv.getNative("watch-later-options") || []).indexOf(prop) !== -1;
+    if (skipped[prop]) mpv.command("change-list", ["watch-later-options", "remove", prop]);
+  }
+  function unskipResume(prop) {
+    if (!(prop in skipped)) return;
+    if (skipped[prop]) mpv.command("change-list", ["watch-later-options", "append", prop]);
+    delete skipped[prop];
+  }
+
   function endMirror() {
     if (mirror === null) return;
     mpv.set("mute", mirror.savedMute);
-    mirror = null;
+    unskipResume("mute");
+    dropMirror();
+    tvWireless = false;
+    updateOverlay();
   }
 
   // Helper-initiated teardowns (stopped/error events, exec settling) happen in
@@ -380,11 +503,32 @@ if (typeof iina !== "undefined") {
     if (mirror === null) return;
     mirror = mirrorOnMpvSeek(mirror, mpv.getNumber("time-pos") || 0, Date.now());
   });
-  // A new file invalidates the whole cast: the stream on the TV is the old
-  // file. file-loaded is an app event (main thread), so stopCast is safe here.
+  // A new file mid-cast (next episode, by hand or at the end of the last one)
+  // carries the cast over: package the new file and let the page swap the
+  // stream on the same <video>, which keeps it on the TV. No stopCast: its
+  // async `helper stop` could land after the new helper started and kill it;
+  // the new `serve` takes over the old instance and its output dir itself.
+  // mpv stays muted throughout, so the new mirror inherits the mute flag the
+  // user had before the first cast, not our own. file-loaded is an app event
+  // (main thread), so touching mpv is safe here.
   event.on("iina.file-loaded", function () {
     if (mirror === null) return;
-    stopCast();
+    var savedMute = mirror.savedMute;
+    dropMirror();
+    state = { phase: "idle", url: null, pct: 0, msg: null };
+    startCast();
+    if (mirror !== null) {
+      mirror.savedMute = savedMute;
+    } else {
+      // The new file can't be cast. No new serve took over the old helper,
+      // so stop it here (nothing to race now), keeping startCast's reason.
+      mpv.set("mute", savedMute);
+      unskipResume("mute");
+      var why = state;
+      stopCast();
+      state = why;
+    }
+    updateOverlay(); // stays up across the swap; comes down if the swap failed
   });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
@@ -487,6 +631,7 @@ if (typeof iina !== "undefined") {
     // Muted mirror: keep mpv playing, silenced, instead of pausing. The page
     // will best-effort seek the TV to startPos once wireless playback begins.
     mirror = newMirror(mpv.getNumber("time-pos") || 0, !!mpv.getFlag("mute"), !!mpv.getFlag("pause"));
+    skipResume("mute");
     mpv.set("mute", true);
 
     resolveBinDir(function (binDir, resolveErr) {
@@ -589,6 +734,11 @@ if (typeof iina !== "undefined") {
       startCast();
       sidebar.postMessage("state", stateForPage());
     });
+    sidebar.onMessage("setHideVideo", function (d) {
+      preferences.set("hideVideo", !!(d && d.on));
+      updateOverlay();
+      sidebar.postMessage("state", stateForPage());
+    });
     sidebar.onMessage("stop", function () {
       stopCast();
       sidebar.postMessage("state", stateForPage());
@@ -617,10 +767,27 @@ if (typeof iina !== "undefined") {
       reapMirror(); // a helper-initiated teardown may have left a stale mirror
                     // un-reaped; don't mpv.set against a dead stream.
       if (mirror === null || !tv) return;
+      tvWireless = !!tv.wireless;
       var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
                               !!mpv.getFlag("pause"), Date.now());
+      // Every correction the TV pushes into mpv, so a desync can be traced
+      // in IINA's log (Window → Log Viewer, subsystem "AirPlay").
+      if (r.setMpvPaused !== null || r.setMpvPos !== null) {
+        console.log("[sync] " + JSON.stringify({ tv: tv, mpvPos: mpv.getNumber("time-pos"),
+          setPaused: r.setMpvPaused, setPos: r.setMpvPos, holding: r.m.holding }));
+      }
       mirror = r.m;
-      if (r.teardown) { stopCast(); return; }
+      updateOverlay();
+      // Re-shown on every report (each 0.5s) so it stays up for the whole
+      // hold: IINA's OSD fades after about a second on its own. With the
+      // overlay up it already says this; don't say it twice.
+      if (mirror.holding && !overlayShown) core.osd("Syncing with TV…");
+      // IINA advances the playlist itself when an episode ends, and
+      // file-loaded carries the cast over. The TV ending ends the cast on
+      // the last item, or when IINA stopped at the end of this one instead.
+      var carriesOver = mpv.getNumber("playlist-pos") < mpv.getNumber("playlist-count") - 1 &&
+                        !mpv.getFlag("eof-reached");
+      if (r.teardown && !carriesOver) { stopCast(); return; }
       if (r.setMpvPaused !== null) mpv.set("pause", r.setMpvPaused);
       if (r.setMpvPos !== null) mpv.set("time-pos", r.setMpvPos);
     });

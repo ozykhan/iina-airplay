@@ -44,6 +44,20 @@ func EnsureVariant(content string, bandwidth int) string {
 	return strings.TrimRight(content, "\n") + "\n" + inf + "\nindex.m3u8\n"
 }
 
+// AddStart pins playback to the start of the media playlist. While ffmpeg
+// is still packaging, the playlist has no ENDLIST, and AVFoundation joins
+// such a playlist like a live stream: near its newest segment. Packaging
+// runs far ahead of playback, so a TV picked a few seconds into a cast came
+// up ~25s ahead of IINA. The plugin seeks the TV to IINA's position from
+// there; this just makes "there" the beginning.
+func AddStart(content string) string {
+	rest, ok := strings.CutPrefix(content, "#EXTM3U\n")
+	if !ok {
+		return content
+	}
+	return "#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n" + rest
+}
+
 // AddVariantAttrs adds CODECS, VIDEO-RANGE and FRAME-RATE to the master's
 // variant line (ffmpeg's, or the one EnsureVariant synthesized) when they are
 // missing; an empty field adds nothing. Whatever ffmpeg already wrote is
