@@ -16,7 +16,7 @@ test("newMirror snapshots start position, saved mute, and current pause", () => 
   const m = newMirror(42, true, false);
   assert.deepEqual(m, {
     seq: 0, paused: false, seekTo: null, startPos: 42, savedMute: true,
-    expectMpvPause: null, lastSetPos: null,
+    expectMpvPause: null, lastSetPos: null, holding: false,
   });
 });
 
@@ -149,3 +149,54 @@ test("the mirror functions never mutate their inputs", () => {
   mirrorOnTvState(m0, tv({ pos: 99, paused: true }), 0, false, 0);
   assert.equal(JSON.stringify(m0), frozen);
 });
+
+test("a settling TV is not reconciled: no snap-back after a seek, no pause echo", () => {
+  // The page just applied seq 1 (a seek to 300); the TV still reads the old
+  // position and a stale paused flag. Following it would undo the user's seek.
+  const m0 = { ...newMirror(0, false, false), seq: 1, seekTo: { seq: 1, pos: 300 } };
+  const r = mirrorOnTvState(m0, tv({ appliedSeq: 1, pos: 10, paused: true, settling: true }), 300, false, 0);
+  assert.equal(r.setMpvPos, null);
+  assert.equal(r.setMpvPaused, null);
+  assert.equal(r.m.seekTo, null, "the ack still clears the pending seek");
+  // Once settled, a real divergence is followed again.
+  const r2 = mirrorOnTvState(r.m, tv({ appliedSeq: 1, pos: 10 }), 300, false, 0);
+  assert.equal(r2.setMpvPos, 10);
+});
+
+test("a seek holds mpv paused until the TV lands, then releases it", () => {
+  const m0 = { ...newMirror(0, false, false), seq: 1 };
+  const held = mirrorOnTvState(m0, tv({ appliedSeq: 1, pos: 10, waiting: true }), 300, false, 0);
+  assert.equal(held.setMpvPaused, true);
+  assert.equal(held.m.holding, true);
+  assert.equal(held.m.paused, false, "the hold is not a user pause");
+  // The hold's own pause echo must not become a command to the TV.
+  assert.equal(mirrorOnMpvPause(held.m, true).seq, 1);
+  const again = mirrorOnTvState(held.m, tv({ appliedSeq: 1, pos: 10, waiting: true }), 300, true, 0);
+  assert.equal(again.setMpvPaused, null, "held once, not re-paused every poll");
+  const landed = mirrorOnTvState(again.m, tv({ appliedSeq: 1, pos: 300.5 }), 300, true, 0);
+  assert.equal(landed.setMpvPaused, false);
+  assert.equal(landed.m.holding, false);
+  assert.equal(landed.setMpvPos, null, "landed within tolerance: no jump");
+});
+
+test("a hold is released if the TV goes away, and never starts while paused", () => {
+  const held = { ...newMirror(0, false, false), seq: 1, holding: true };
+  assert.equal(mirrorOnTvState(held, tv({ appliedSeq: 1, wireless: false }), 300, true, 0).setMpvPaused, false);
+  const paused = { ...newMirror(0, false, true), seq: 1 };
+  const r = mirrorOnTvState(paused, tv({ appliedSeq: 1, paused: true, waiting: true }), 300, true, 0);
+  assert.equal(r.setMpvPaused, null);
+  assert.equal(r.m.holding, false);
+});
+
+test("a TV stuck 'playing' at one spot holds mpv instead of yanking it back", () => {
+  // The logged loop: TV reports playing at 32.35 for 31s; mpv ran 2s ahead
+  // and was seeked back every poll. Waiting now holds mpv where it is.
+  const m0 = newMirror(0, false, false);
+  const r = mirrorOnTvState(m0, tv({ pos: 32.35, waiting: true }), 34.3, false, 0);
+  assert.equal(r.setMpvPos, null);
+  assert.equal(r.setMpvPaused, true);
+  const moving = mirrorOnTvState(r.m, tv({ pos: 32.7 }), 34.3, true, 0);
+  assert.equal(moving.setMpvPaused, false);
+  assert.equal(moving.setMpvPos, 32.7, "one correction once the TV moves, not a loop");
+});
+

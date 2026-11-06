@@ -31,6 +31,11 @@ func TestServerMIMEAndRange(t *testing.T) {
 	if ct := resp.Header.Get("Content-Type"); ct != "application/vnd.apple.mpegurl" {
 		t.Fatalf("m3u8 content-type = %q", ct)
 	}
+	resp, _ = http.Get(base + "/index.m3u8")
+	if b, _ := io.ReadAll(resp.Body); string(b) != "#EXTM3U\n#EXT-X-START:TIME-OFFSET=0,PRECISE=YES\n" {
+		t.Fatalf("media playlist must start at 0, got %q", b)
+	}
+	resp.Body.Close()
 
 	req, _ := http.NewRequest("GET", base+"/seg_0000.m4s", nil)
 	req.Header.Set("Range", "bytes=2-4")
