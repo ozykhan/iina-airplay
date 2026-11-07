@@ -54,7 +54,10 @@ func StartServer(dir, subName, subLang string, bandwidth int, rangeHint string) 
 				return
 			}
 		}
-		files.ServeHTTP(w, r)
+		// Hide io.ReaderFrom so net/http uses buffered writes for these files.
+		// On affected macOS network setups, sendfile can put the body before
+		// the HTTP headers. See https://github.com/golang/go/issues/79706.
+		files.ServeHTTP(struct{ http.ResponseWriter }{w}, r)
 	})
 	srv := &http.Server{Handler: handler}
 	go srv.Serve(ln)
