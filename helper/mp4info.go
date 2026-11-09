@@ -600,11 +600,16 @@ func aacLCSignaledObjectType(asc []byte) int {
 		}
 		return v
 	}
-	freq := read(4)
-	if freq < 0 {
-		return 2
+	// Indices 13 and 14 are reserved; index 15 carries a positive 24-bit
+	// frequency. Require a complete, valid rate before trusting an extension.
+	readFrequency := func() bool {
+		index := read(4)
+		if index == 15 {
+			return read(24) > 0
+		}
+		return index >= 0 && index <= 12
 	}
-	if freq == 15 && read(24) < 0 {
+	if !readFrequency() {
 		return 2
 	}
 	channels := read(4)
@@ -613,34 +618,33 @@ func aacLCSignaledObjectType(asc []byte) int {
 	if channels <= 0 {
 		return 2
 	}
-	if read(1) < 0 {
+	// GASpecificConfig for AAC-LC.
+	if read(1) < 0 { // frameLengthFlag
 		return 2
-	} // frameLengthFlag
-	core := read(1)
+	}
+	core := read(1) // dependsOnCoreCoder
 	if core < 0 {
 		return 2
 	}
 	if core == 1 && read(14) < 0 {
 		return 2
 	}
-	ext := read(1)
+	ext := read(1) // extensionFlag
 	if ext < 0 {
 		return 2
 	}
-	if ext == 1 && read(1) != 0 {
+	if ext == 1 && read(1) != 0 { // extensionFlag3: unsupported future syntax
 		return 2
-	} // extensionFlag3
+	}
 	if read(11) != 0x2b7 || read(5) != 5 || read(1) != 1 {
 		return 2
 	}
-	freq = read(4)
-	if freq < 0 {
+	if !readFrequency() {
 		return 2
 	}
-	if freq == 15 && read(24) < 0 {
-		return 2
-	}
-	if read(11) == 0x548 && read(1) == 1 {
+	// Parametric stereo expands a mono core to stereo; it is not a valid
+	// HE-AAC v2 declaration for an already multichannel core.
+	if channels == 1 && read(11) == 0x548 && read(1) == 1 {
 		return 29
 	}
 	return 5
