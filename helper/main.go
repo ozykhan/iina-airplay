@@ -60,6 +60,7 @@ func runServe(argv []string) {
 	fs.StringVar(&c.SubPath, "subpath", "", "external subtitle file (used as input 1; overrides -smap)")
 	fs.StringVar(&c.SubLang, "sublang", "", "subtitle language tag for the HLS rendition")
 	fs.StringVar(&c.SubName, "subname", "", "subtitle display name for the HLS rendition")
+	fs.StringVar(&c.SubCodec, "subcodec", "", "subtitle codec (mpv name); ass/ssa are cleaned of typesetting first")
 	fs.StringVar(&rangeHint, "vrange", "", "PQ or HLG when the player decodes an HDR transfer; used for the master's VIDEO-RANGE when init.mp4 has no colr box")
 	fs.Parse(argv)
 
@@ -125,6 +126,16 @@ func runServe(argv []string) {
 		fail(err.Error())
 	}
 
+	// Before PrepareASS: extracting an embedded track reads the whole
+	// source, and a Stop arriving meanwhile must reach the teardown below
+	// rather than kill the helper with its pidfile still in place.
+	sigs := make(chan os.Signal, 1)
+	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
+
+	if c, err = PrepareASS(c); err != nil {
+		fmt.Fprintln(os.Stderr, "casting unfiltered subtitles:", err)
+	}
+
 	var done <-chan error
 	stopJob, done = RunJob(c, os.Stdout)
 
@@ -141,9 +152,6 @@ func runServe(argv []string) {
 		os.Remove(pidfile)
 		os.Exit(0)
 	})
-	sigs := make(chan os.Signal, 1)
-	signal.Notify(sigs, syscall.SIGTERM, syscall.SIGINT)
-
 	// The TV can start pulling as soon as the advertised playlist exists.
 	// With subs that's ffmpeg's master playlist — but the variant playlists
 	// it points at (media + subtitle rendition) must exist too before the
