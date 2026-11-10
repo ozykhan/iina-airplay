@@ -585,7 +585,8 @@ func mp4aCodec(esds []byte) string {
 
 // AAC may signal SBR/PS after the AAC-LC GASpecificConfig instead of in
 // the initial object type. Advertising only the LC core rejects otherwise
-// playable HE-AAC streams when WebKit loads a master playlist.
+// playable HE-AAC streams when WebKit loads a master playlist. Truly implicit
+// HE-AAC has no SBR signaling in the config and remains mp4a.40.2 here.
 func aacLCSignaledObjectType(asc []byte) int {
 	pos := 5 // initial AAC-LC object type
 	read := func(n int) int {
