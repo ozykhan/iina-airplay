@@ -53,6 +53,8 @@ func runServe(argv []string) {
 	fs.Float64Var(&c.Duration, "duration", 0, "source duration seconds")
 	fs.StringVar(&c.VCodec, "vcodec", "", "source video codec (mpv name)")
 	fs.StringVar(&c.ACodec, "acodec", "", "source audio codec (mpv name)")
+	fs.IntVar(&c.VDepth, "vdepth", 0, "source video bit depth (0 = unknown)")
+	fs.IntVar(&c.VHeight, "vheight", 0, "source video height in pixels (0 = unknown)")
 	fs.IntVar(&c.AChannels, "achannels", 2, "audio channel count")
 	fs.IntVar(&c.VMap, "vmap", 0, "video stream ff-index")
 	fs.IntVar(&c.AMap, "amap", 1, "audio stream ff-index")
@@ -114,7 +116,7 @@ func runServe(argv []string) {
 	if fi, serr := os.Stat(c.Source); serr == nil {
 		srcSize = fi.Size()
 	}
-	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, EstimateBandwidth(srcSize, c.Duration), rangeHint)
+	port, shutdown, err := StartServer(c.OutDir, c.SubName, c.SubLang, AdvertisedBandwidth(c, srcSize), rangeHint)
 	if err != nil {
 		fail(err.Error())
 	}

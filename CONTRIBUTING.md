@@ -21,9 +21,11 @@ notes below were checked on), and:
 brew install go node ffmpeg
 ```
 
-`nasm` is needed **only** if you build the shipped package (`make pack` /
-`make ffmpeg`) — the x86_64 ffmpeg slice assembles hand-written x86 assembly
-with it. The everyday dev loop never builds ffmpeg from source.
+`nasm`, `meson`, `ninja` and `pkgconf` are needed **only** if you build the
+shipped package (`make pack` / `make ffmpeg`): nasm assembles the x86_64
+slice's hand-written assembly, and the other three build the static dav1d that
+gives the bundled ffmpeg its AV1 decoder. The everyday dev loop never builds
+ffmpeg from source.
 
 ## Dev loop
 

@@ -93,6 +93,7 @@ entry="$(/usr/bin/python3 -c 'import json,sys; print(json.load(open(sys.argv[1])
 [ -s "$TMP/bin/VERSIONS" ] || fail "bin/VERSIONS is missing or empty from the package"
 [ -s "$TMP/bin/ffmpeg-LICENSE.md" ] || fail "bin/ffmpeg-LICENSE.md is missing or empty from the package"
 [ -s "$TMP/bin/COPYING.LGPLv2.1" ] || fail "bin/COPYING.LGPLv2.1 is missing or empty from the package (LGPL 2.1 requires shipping a copy of the license text, not just a link)"
+[ -s "$TMP/bin/COPYING.dav1d" ] || fail "bin/COPYING.dav1d is missing or empty from the package (dav1d's BSD-2-Clause license requires reproducing its notice with the binary)"
 
 # --- plugin payload: not stale ------------------------------------------------
 # Presence alone isn't enough: a pack.sh run that failed AFTER copying the
@@ -191,10 +192,14 @@ check_ffmpeg_slice() {
   done
   grep -qw libx264 <<<"$slice_encoders" && fail "bundled ffmpeg ($slice_label slice) contains libx264 (GPL)"
 
-  for d in h264 hevc vp9 av1 mpeg2video; do
+  for d in h264 hevc vp9 mpeg2video libdav1d; do
     grep -qw "$d" <<<"$slice_decoders" \
       || fail "bundled ffmpeg ($slice_label slice) lacks the $d decoder; helper/job.go's re-encode branch needs it"
   done
+  # Not `av1`: ffmpeg's native av1 decoder is listed in every build but is
+  # hardware-only and fails every frame without a hwaccel, so its presence
+  # proves nothing. libdav1d above is the decoder helper/job.go names for AV1;
+  # the helper suite (test-package.sh) then decodes a real 10-bit AV1 file.
 }
 
 # Decide and ANNOUNCE which slices get checked before running any of them. A

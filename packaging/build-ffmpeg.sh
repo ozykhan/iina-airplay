@@ -10,6 +10,18 @@ set -euo pipefail
 FFMPEG_VERSION="9.0.1"
 FFMPEG_SHA256="cf38e0e28c7e5605942c4a77755349b0145804a397af37eb1fb4c77cb237f635"
 
+# dav1d is the only way this ffmpeg decodes AV1. ffmpeg's native "av1"
+# decoder is a hardware-acceleration shell with no software path: without a
+# hwaccel it fails every frame ("Your platform doesn't support hardware
+# accelerated AV1 decoding"), and no Mac before M3 has AV1 decode hardware at
+# all. It still shows up in `ffmpeg -decoders`, which is how an AV1-less build
+# passed verify.sh. dav1d is BSD-2-Clause, so the build stays LGPL-only.
+# Pinned by tag AND commit: the clone is refused unless HEAD is exactly this
+# commit, the git equivalent of the tarball SHA-256 check above.
+DAV1D_VERSION="1.5.4"
+DAV1D_COMMIT="54706fc6bc0cdecab7e9593974a4039cc038fca7"
+DAV1D_REPO="https://code.videolan.org/videolan/dav1d.git"
+
 ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 OUT="$ROOT/build/ffmpeg"
 SRC="$OUT/src"
@@ -45,6 +57,15 @@ if [ "$ARCH_MODE" = "universal" ] && [ "$(uname -m)" != "arm64" ]; then
   echo "  pass --arch native here to build only for this host's own architecture." >&2
   exit 1
 fi
+
+# dav1d builds with meson + ninja, and ffmpeg's configure finds it through
+# pkg-config. All three are build-host tools only; nothing of them ships.
+for tool in meson ninja pkg-config; do
+  if ! command -v "$tool" >/dev/null 2>&1; then
+    echo "build-ffmpeg: $tool not found; brew install meson ninja pkgconf" >&2
+    exit 1
+  fi
+done
 
 # Any change to this script — a flag, the pinned version — invalidates the
 # cached build. Hashing the script itself is the whole cache-key story.
@@ -98,6 +119,7 @@ common_flags() {
   cat <<'FLAGS'
 --disable-autodetect
 --enable-videotoolbox
+--enable-libdav1d
 --enable-zlib
 --disable-doc
 --disable-debug
@@ -119,6 +141,76 @@ common_flags() {
 FLAGS
 }
 
+DAV1D_SRC="$OUT/dav1d-src"
+fetch_dav1d() {
+  if [ -d "$DAV1D_SRC/.git" ] && [ "$(git -C "$DAV1D_SRC" rev-parse HEAD 2>/dev/null)" = "$DAV1D_COMMIT" ]; then
+    echo "build-ffmpeg: dav1d $DAV1D_VERSION source already present"
+    return
+  fi
+  rm -rf "$DAV1D_SRC"
+  echo "build-ffmpeg: fetching dav1d $DAV1D_VERSION"
+  git clone --quiet --depth 1 --branch "$DAV1D_VERSION" "$DAV1D_REPO" "$DAV1D_SRC"
+  local head
+  head="$(git -C "$DAV1D_SRC" rev-parse HEAD)"
+  if [ "$head" != "$DAV1D_COMMIT" ]; then
+    echo "build-ffmpeg: dav1d tag $DAV1D_VERSION resolved to $head, expected $DAV1D_COMMIT" >&2
+    echo "Refusing to build an unverified source tree." >&2
+    rm -rf "$DAV1D_SRC"
+    exit 1
+  fi
+}
+
+# Static libdav1d for one architecture, installed under $OUT/dav1d-<arch>,
+# whose lib/pkgconfig is what that arch's ffmpeg configure sees. Static only:
+# a libdav1d.dylib would be a non-system dependency, which verify.sh's
+# linkage check rejects.
+build_dav1d() {
+  local arch="$1"
+  local minver="$2"
+  local prefix="$OUT/dav1d-$arch"
+  local bdir="$OUT/dav1d-build-$arch"
+  if [ -f "$prefix/lib/libdav1d.a" ] && [ "$(cat "$prefix/.recipe" 2>/dev/null)" = "$RECIPE_HASH $arch" ]; then
+    echo "build-ffmpeg: dav1d ($arch) up to date"
+    return
+  fi
+  rm -rf "$prefix" "$bdir"
+  local setup=(
+    --prefix="$prefix" --libdir=lib
+    --buildtype=release --default-library=static
+    -Denable_tools=false -Denable_tests=false
+    -Denable_examples=false -Denable_docs=false
+  )
+  if [ "$arch" = "x86_64" ] && [ "$(uname -m)" != "x86_64" ]; then
+    # Same cross-compile as ffmpeg's x86_64 leg below. nasm (already checked
+    # above for universal mode) assembles dav1d's x86 SIMD, which is most of
+    # its speed; it's found on the build host's PATH.
+    local cross="$OUT/dav1d-x86_64.cross"
+    cat > "$cross" <<CROSS
+[binaries]
+c = 'clang'
+ar = 'ar'
+strip = 'strip'
+
+[built-in options]
+c_args = ['-arch', 'x86_64', '-mmacosx-version-min=$minver']
+c_link_args = ['-arch', 'x86_64', '-mmacosx-version-min=$minver']
+
+[host_machine]
+system = 'darwin'
+cpu_family = 'x86_64'
+cpu = 'x86_64'
+endian = 'little'
+CROSS
+    setup+=(--cross-file "$cross")
+  else
+    setup+=(-Dc_args="-mmacosx-version-min=$minver" -Dc_link_args="-mmacosx-version-min=$minver")
+  fi
+  meson setup "$bdir" "$DAV1D_SRC" "${setup[@]}"
+  ninja -C "$bdir" install
+  rm -f "$prefix"/lib/libdav1d*.dylib
+  echo "$RECIPE_HASH $arch" > "$prefix/.recipe"
+}
+
 build_one() {
   # Split from a single `local a=.. d=$OUT/$a` because macOS ships bash 3.2:
   # under `set -u`, all words on a `local` line are expanded before any
@@ -129,6 +221,9 @@ build_one() {
   shift 2
   local dest="$OUT/$arch"
   mkdir -p "$dest"
+
+  build_dav1d "$arch" "$minver"
+  local dav1d_pc="$OUT/dav1d-$arch/lib/pkgconfig"
 
   # Remaining positional args are this arch's extra configure flags, kept as
   # an array and forwarded via "$@" — never collected back into one string.
@@ -169,8 +264,12 @@ build_one() {
     rm -f "$configured_marker"
     ( cd "$SRC" && make distclean >/dev/null 2>&1 || true )
     # shellcheck disable=SC2046
-    ( cd "$SRC" && ./configure \
+    # PKG_CONFIG_PATH points at this arch's dav1d and nothing else, so
+    # --enable-libdav1d can never pick up a Homebrew copy (wrong arch, and a
+    # dylib). --static pulls in dav1d's Libs.private for the static link.
+    ( cd "$SRC" && PKG_CONFIG_PATH="$dav1d_pc" PKG_CONFIG_LIBDIR="$dav1d_pc" ./configure \
         --prefix="$dest" \
+        --pkg-config-flags=--static \
         $(common_flags) \
         --extra-cflags="-mmacosx-version-min=$minver" \
         --extra-ldflags="-mmacosx-version-min=$minver" \
@@ -180,6 +279,8 @@ build_one() {
 
   ( cd "$SRC" && make -j"$(sysctl -n hw.ncpu)" && cp ffmpeg "$dest/ffmpeg" )
 }
+
+fetch_dav1d
 
 case "$ARCH_MODE" in
   native)
@@ -214,6 +315,9 @@ cat > "$OUT/VERSION" <<EOF
 ffmpeg_version=$FFMPEG_VERSION
 source_sha256=$FFMPEG_SHA256
 source_url=$TARBALL_URL
+dav1d_version=$DAV1D_VERSION
+dav1d_commit=$DAV1D_COMMIT
+dav1d_source=$DAV1D_REPO
 EOF
 
 echo "$RECIPE_HASH $ARCH_MODE" > "$STAMP"

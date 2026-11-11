@@ -7,6 +7,7 @@ STAGE="$ROOT/build/stage/iina-airplay"
 FFMPEG="$ROOT/build/ffmpeg/ffmpeg"
 FFVERSION="$ROOT/build/ffmpeg/VERSION"
 FFLICENSE="$ROOT/build/ffmpeg/src/COPYING.LGPLv2.1"
+DAV1DLICENSE="$ROOT/build/ffmpeg/dav1d-src/COPYING"
 HELPER="$ROOT/build/helper/airplay-helper"
 # The manifest lives at the repository root, not under plugin/: IINA's update
 # check fetches raw.githubusercontent.com/<ghRepo>/<branch>/Info.json. It is
@@ -34,6 +35,9 @@ done
 # upstream COPYING.LGPLv2.1 at this path — fail loudly rather than silently
 # shipping a package that only links gnu.org.
 [ -f "$FFLICENSE" ] || { echo "pack: missing $FFLICENSE — the ffmpeg source tree is missing its LGPL license text; re-run build-ffmpeg.sh" >&2; exit 1; }
+# dav1d is statically linked into bin/ffmpeg, and its BSD-2-Clause license
+# requires binary redistributions to reproduce its copyright notice.
+[ -f "$DAV1DLICENSE" ] || { echo "pack: missing $DAV1DLICENSE — the dav1d source tree is missing its license; re-run build-ffmpeg.sh" >&2; exit 1; }
 
 for f in "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$PLUGIN_PREFS"; do
   [ -f "$f" ] || { echo "pack: missing $f — the plugin source tree is incomplete" >&2; exit 1; }
@@ -97,12 +101,16 @@ verify_binary "airplay-helper" "$HELPER" "build-helper.sh"
 ffmpeg_version="$(grep '^ffmpeg_version=' "$FFVERSION" | cut -d= -f2-)"
 source_sha256="$(grep '^source_sha256=' "$FFVERSION" | cut -d= -f2-)"
 source_url="$(grep '^source_url=' "$FFVERSION" | cut -d= -f2-)"
+dav1d_version="$(grep '^dav1d_version=' "$FFVERSION" | cut -d= -f2-)"
+dav1d_commit="$(grep '^dav1d_commit=' "$FFVERSION" | cut -d= -f2-)"
+dav1d_source="$(grep '^dav1d_source=' "$FFVERSION" | cut -d= -f2-)"
 
 rm -rf "$ROOT/build/stage" && mkdir -p "$STAGE/bin"
 cp "$PLUGIN_INFO" "$PLUGIN_MAIN" "$PLUGIN_SIDEBAR" "$PLUGIN_PREFS" "$STAGE/"
 cp "$FFMPEG" "$STAGE/bin/ffmpeg"
 cp "$HELPER" "$STAGE/bin/airplay-helper"
 cp "$FFLICENSE" "$STAGE/bin/COPYING.LGPLv2.1"
+cp "$DAV1DLICENSE" "$STAGE/bin/COPYING.dav1d"
 chmod 755 "$STAGE/bin/ffmpeg" "$STAGE/bin/airplay-helper"
 
 helper_version="$(git -C "$ROOT" describe --tags --always --dirty 2>/dev/null || echo unknown)"
@@ -123,6 +131,8 @@ helper_sha256=$(shasum -a 256 "$STAGE/bin/airplay-helper" | cut -d' ' -f1)
 ffmpeg_version=$ffmpeg_version
 ffmpeg_sha256=$(shasum -a 256 "$STAGE/bin/ffmpeg" | cut -d' ' -f1)
 ffmpeg_source_sha256=$source_sha256
+dav1d_version=$dav1d_version
+dav1d_commit=$dav1d_commit
 EOF
 
 REPO_URL="https://github.com/ozykhan/iina-airplay"
@@ -145,6 +155,16 @@ A copy of the license text is included alongside this file as
 https://www.gnu.org/licenses/lgpl-2.1.html).
 
 FFmpeg is a trademark of Fabrice Bellard, originator of the FFmpeg project.
+
+## dav1d
+
+The FFmpeg binary statically links dav1d $dav1d_version (AV1 decoding),
+licensed under the BSD 2-Clause License.
+
+- Upstream source: $dav1d_source, tag \`$dav1d_version\`, commit \`$dav1d_commit\`
+
+Its copyright notice and license are included alongside this file as
+\`bin/COPYING.dav1d\`.
 EOF
 
 # Packs to the canonical path directly. The old iina-plugin CLI wrote
