@@ -16,7 +16,8 @@ function loadPlugin(opts = {}) {
   const messages = {};       // name -> handler registered via sidebar.onMessage
   const posted = [];         // [name, payload] sent to the page
   const osd = [];
-  const flags = { pause: false, mute: opts.mute || false };
+  const flags = { pause: false, mute: opts.mute || false,
+                  speed: opts.speed !== undefined ? opts.speed : 1 };
   const sets = [];           // [name, value] pushed by mpv.set
   const events = {};         // event name -> callback registered via event.on
   const mpvCalls = [];       // every mpv.* call, to prove none happen after the player is gone
@@ -43,7 +44,8 @@ function loadPlugin(opts = {}) {
         return null;
       },
       getNumber: (k) => (mpvCalls.push(k), k === "pid" ? 4321 : k === "duration" ? 120
-                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
+                       : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42)
+                       : k === "speed" ? flags.speed : 0),
       getNative: (k) => (mpvCalls.push(k), trackList),
       getFlag: (k) => (mpvCalls.push(k), !!flags[k]),
       set: (k, v) => { mpvCalls.push(k); sets.push([k, v]); flags[k] = v; },
@@ -325,9 +327,49 @@ test("state posts carry the sync block while casting, null when idle", () => {
   p.clickMenu();
   p.send("getState", {});
   assert.deepEqual(p.state().sync,
-    { seq: 0, paused: false, seekTo: null, startPos: 42 });
+    { seq: 0, paused: false, seekTo: null, startPos: 42, rate: 1, ignoredRate: null });
   p.send("stop", {});
   assert.equal(p.state().sync, null);
+});
+
+// ---- playback speed (issue #48) ----
+
+test("a cast asks the TV for mpv's current speed", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  p.send("getState", {});
+  assert.equal(p.state().sync.rate, 1.25);
+});
+
+test("an mpv speed change during a cast is passed on to the TV", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.flags.speed = 1.5;
+  p.fire("mpv.speed.changed");
+  p.send("getState", {});
+  assert.equal(p.state().sync.rate, 1.5);
+});
+
+// The TV plays at 1x for 11 s with the page's playbackRate at 1.25.
+function tvIgnoresSpeed(p) {
+  for (let ms = 0; ms <= 11000; ms += 500) {
+    p.send("tvState", { appliedSeq: 0, pos: 42 + ms / 1000, paused: false, wireless: true,
+                        ended: false, rate: 1.25, seeking: false, at: ms });
+  }
+}
+
+test("a TV that ignores the speed drops mpv to 1x, says so, and stop restores it", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  tvIgnoresSpeed(p);
+  assert.deepEqual(p.sets.filter(([k]) => k === "speed"), [["speed", 1]]);
+  assert.ok(p.osd.some((m) => /speed/i.test(m)), "expected an OSD saying the TV ignored the speed");
+  p.fire("mpv.speed.changed");         // the echo of our own set
+  p.send("getState", {});
+  assert.equal(p.state().sync.rate, 1);
+  assert.equal(p.state().sync.ignoredRate, 1.25, "the echo must not read as a new request");
+  p.send("stop", {});
+  assert.equal(p.flags.speed, 1.25, "the user's speed comes back once the TV no longer sets the clock");
 });
 
 test("stop restores the pre-cast mute flag (false case)", () => {
@@ -701,4 +743,26 @@ test("a cast that ends while the window is closed still restores mute later", ()
   assert.deepEqual(p.mpvCalls, [], "nothing touches mpv while it is gone");
   p.fire("iina.file-loaded");
   assert.equal(p.flags.mute, false, "the deferred mute restore lands on file-loaded");
+});
+
+test("after window-will-close, a speed change leaves mpv alone", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.fire("mpv.speed.changed");
+  assert.deepEqual(p.mpvCalls, []);
+});
+
+test("a speed the TV ignored is restored later if the cast ends while the window is closed", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  tvIgnoresSpeed(p);
+  assert.equal(p.flags.speed, 1);
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("stop", {});
+  assert.deepEqual(p.mpvCalls, [], "nothing touches mpv while it is gone");
+  p.fire("iina.file-loaded");
+  assert.equal(p.flags.speed, 1.25, "the deferred speed restore lands on file-loaded");
 });

@@ -117,6 +117,35 @@ wireless drops.
   manual on the user's Apple TV: space bar, scrubber drag, TV-remote pause,
   stop-cast handback, start-cast initial position.
 
+## Playback speed (issue #48, added 2026-10-29)
+
+The first version never forwarded mpv's `speed`, so a user at 1.25x saw the
+TV play at 1x. It was worse than that: mpv kept running at 1.25x, pulled
+ahead of the TV by 0.25 s every second, and drift correction dragged it back
+about every 6 s.
+
+- **IINA → TV.** `mpv.speed.changed` sets `mirror.rate`; the sync block
+  carries `rate`, and the page sets `v.playbackRate` (and
+  `defaultPlaybackRate`, which a reload resets it to) on every poll. Speed is
+  level-applied, not seq'd, so it never holds back pause or drift handling.
+- **The TV may not obey.** AirPlay receivers are only reliable at rate 0
+  and 1; some always play at 1x. `v.playbackRate` reads back what was asked
+  for either way, so `main.js` measures the TV instead: `tvState` adds
+  `rate`, `seeking` and `at` (the page's clock when it read `pos`), and
+  `mirrorOnTvState` sums position against time over 10 s of TV playback at
+  the requested rate. Paused, seeking, unacked and not-yet-applied polls
+  reset the measurement; position jumps between polls (a TV-remote skip) are
+  left out.
+- **A TV found at 1x sets the clock**, as it does for position: mpv drops to
+  1x (the echo is swallowed like a pause echo), the OSD and the sidebar's TV
+  row say the TV ignored the speed, and the asked-for speed is kept in
+  `ignoredRate`. Stopping the cast restores it to mpv, the same way mute is
+  restored. A new speed from the user supersedes it and is measured again.
+
+Not verified on hardware: whether WebKit forwards `playbackRate` to the
+receiver over AirPlay at all (if not, every TV takes the 1x fallback), and
+whether `v.currentTime` follows the TV closely enough for the measurement.
+
 ## Out of scope
 
 - Volume/mute forwarding to the TV (user decision).

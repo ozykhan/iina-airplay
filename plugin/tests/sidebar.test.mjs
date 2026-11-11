@@ -19,6 +19,7 @@ function loadPage() {
   const trackListeners = {};
   const video = Object.assign(el("v"), {
     src: "", paused: true, muted: true, currentTime: 0, error: null,
+    playbackRate: 1, defaultPlaybackRate: 1, seeking: false,
     seekable: { length: 0 },
     textTracks: { addEventListener: (name, cb) => { trackListeners[name] = cb; } },
     addEventListener: (name, cb) => { listeners[name] = cb; },
@@ -29,17 +30,19 @@ function loadPage() {
   });
   const posted = [];
   const handlers = {};
+  let poll = null;
   const context = {
     document: { getElementById: el },
     iina: {
       postMessage: (name, data) => posted.push([name, data]),
       onMessage: (name, cb) => { handlers[name] = cb; },
     },
-    setInterval: () => 0,
+    setInterval: (cb) => { poll = cb; return 0; },
   };
   vm.runInNewContext(script, context);
   return {
     video, posted, els,
+    poll: () => poll(),
     state: (s) => handlers.state(Object.assign(
       { pct: 0, msg: null, duration: 100, sync: null, subs: { label: "", warn: false } }, s)),
     fire: (name, ev) => listeners[name](ev || {}),
@@ -148,4 +151,44 @@ test("a diagnosis alone does not put the page in the error row", () => {
   const p = loadPage();
   p.state({ phase: "ready", url: URL_, diag: { url: URL_, msg: "old" } });
   assert.equal(p.els.headline.textContent, "Ready to send");
+});
+
+// ---- playback speed (issue #48) ----
+
+const sync = (over = {}) => ({ seq: 0, paused: false, seekTo: null, startPos: 0,
+                               rate: 1, ignoredRate: null, ...over });
+
+// Loads the stream, then puts the element on the TV.
+function onTV(p, s) {
+  p.state({ phase: "ready", url: URL_, sync: sync(s) });
+  p.video.webkitCurrentPlaybackTargetIsWireless = true;
+  p.fire("webkitcurrentplaybacktargetiswirelesschanged");
+  p.state({ phase: "ready", url: URL_, sync: sync(s) });
+}
+
+test("the requested rate is applied to the video, and survives a reload", () => {
+  const p = loadPage();
+  onTV(p, { rate: 1.25 });
+  assert.equal(p.video.playbackRate, 1.25);
+  // A load resets playbackRate to defaultPlaybackRate, so set both.
+  assert.equal(p.video.defaultPlaybackRate, 1.25);
+});
+
+test("the poll reports the element's rate, seeking flag and sample time", () => {
+  const p = loadPage();
+  onTV(p, { rate: 1.25 });
+  p.video.seeking = true;
+  p.poll();
+  const tv = p.posted.filter(([n]) => n === "tvState").at(-1)[1];
+  assert.equal(tv.rate, 1.25);
+  assert.equal(tv.seeking, true);
+  assert.equal(typeof tv.at, "number");
+});
+
+test("the TV row names a speed the TV ignored", () => {
+  const p = loadPage();
+  onTV(p, { ignoredRate: 1.25 });
+  assert.equal(p.els.headline.textContent, "Playing on TV");
+  assert.match(p.els.sub.textContent, /1\.25×/);
+  assert.equal(p.els.sub.className, "warn");
 });

@@ -153,6 +153,13 @@
 
   function applySync(sync) {
     if (!sync || !loadedURL) return;
+    // Applied on every poll, outside seq: a reload resets playbackRate to
+    // defaultPlaybackRate, so both are set, and tvState reports the rate back
+    // so main.js only measures the TV once it has been asked (issue #48).
+    if (sync.rate > 0 && v.playbackRate !== sync.rate) {
+      v.defaultPlaybackRate = sync.rate;
+      v.playbackRate = sync.rate;
+    }
     if (sync.seq > appliedSeq) {
       // seekTo carries its own seq so a later pause command doesn't replay a
       // seek this page already performed.
@@ -246,8 +253,12 @@
             secondary: "Cancel", sact: "stop" };
     } else if (onTV) {
       var pos = v.currentTime || 0;
-      r = { dot: "live", headline: "Playing on TV", sub: subs.label,
-            warn: subs.warn, meter: true, done: false,
+      // The TV played at 1x when asked for another speed, so main.js put
+      // IINA back to 1x; say why, or the speed just appears to reset.
+      var ignored = s.sync && s.sync.ignoredRate;
+      r = { dot: "live", headline: "Playing on TV",
+            sub: ignored ? "TV ignored " + Number(ignored.toFixed(2)) + "× speed, playing at 1×" : subs.label,
+            warn: ignored ? true : subs.warn, meter: true, done: false,
             pct: s.duration > 0 ? (pos / s.duration) * 100 : 0,
             primary: "Stop casting", act: "stop", accent: false, off: false,
             secondary: "Send to another TV", sact: "pick" };
@@ -345,6 +356,9 @@
         paused: v.paused,
         wireless: onTV,
         ended: ended,
+        rate: v.playbackRate,
+        seeking: v.seeking,
+        at: Date.now(),        // when pos was read: main.js measures the TV's rate against it
       });
     }
   }, 500);
