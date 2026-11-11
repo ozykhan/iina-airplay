@@ -19,6 +19,7 @@ function loadPlugin(opts = {}) {
   const flags = { pause: false, mute: opts.mute || false };
   const sets = [];           // [name, value] pushed by mpv.set
   const events = {};         // event name -> callback registered via event.on
+  const mpvCalls = [];       // every mpv.* call, to prove none happen after the player is gone
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
   const stderrs = [];        // per-serve stderr callbacks
   const logs = [];           // console.log lines
@@ -34,14 +35,18 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
     mpv: {
-      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv")
-                       : k === "video-params/gamma" ? (opts.gamma !== undefined ? opts.gamma : "bt.1886")
-                       : null),
-      getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120
+      getString: (k) => {
+        mpvCalls.push(k);
+        if (k === "path") return opts.path !== undefined ? opts.path : "/movies/a.mkv";
+        if (k === "video-params/gamma") return opts.gamma !== undefined ? opts.gamma : "bt.1886";
+        if (opts.videoParams && k in opts.videoParams) return opts.videoParams[k];
+        return null;
+      },
+      getNumber: (k) => (mpvCalls.push(k), k === "pid" ? 4321 : k === "duration" ? 120
                        : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42) : 0),
-      getNative: () => trackList,
-      getFlag: (k) => !!flags[k],
-      set: (k, v) => { sets.push([k, v]); flags[k] = v; },
+      getNative: (k) => (mpvCalls.push(k), trackList),
+      getFlag: (k) => (mpvCalls.push(k), !!flags[k]),
+      set: (k, v) => { mpvCalls.push(k); sets.push([k, v]); flags[k] = v; },
     },
     event: { on: (name, cb) => { events[name] = cb; } },
     menu: {
@@ -94,7 +99,7 @@ function loadPlugin(opts = {}) {
 
   return {
     execs, posted, osd, logs,
-    flags, sets,
+    flags, sets, mpvCalls,
     fire: (name) => { assert.ok(events[name], `no event handler for "${name}"`); events[name](); },
     helperSays: (obj) => { assert.ok(stdouts.length, "no serve running"); stdouts.at(-1)(JSON.stringify(obj) + "\n"); },
     helperStderr: (chunk) => { assert.ok(stderrs.length, "no serve running"); stderrs.at(-1)(chunk); },
@@ -599,4 +604,101 @@ test("a probe that settles after the cast was stopped is dropped", async () => {
   await tick();
   p.send("getState");
   assert.equal(p.state().diag, null);
+});
+
+// ---- AV1 / 10-bit: what startCast tells the helper about the video ----
+
+const argAfter = (args, flag) => args[args.indexOf(flag) + 1];
+
+test("a software-decoded 10-bit AV1 cast passes -vdepth 10 and the height", () => {
+  const p = loadPlugin({
+    tracks: [
+      { type: "video", selected: true, codec: "av1", "ff-index": 0, "demux-h": 2160 },
+      { type: "audio", selected: true, codec: "opus", "ff-index": 1, "demux-channel-count": 2 },
+    ],
+    videoParams: { "video-params/pixelformat": "yuv420p10" }, // no hw-pixelformat: software decode
+  });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(argAfter(args, "-vcodec"), "av1");
+  assert.equal(argAfter(args, "-vdepth"), "10");
+  assert.equal(argAfter(args, "-vheight"), "2160");
+});
+
+test("a hardware-decoded source reads its depth from hw-pixelformat", () => {
+  const p = loadPlugin({
+    videoParams: { "video-params/pixelformat": "videotoolbox", "video-params/hw-pixelformat": "p010" },
+  });
+  p.clickMenu();
+  assert.equal(argAfter(serves(p)[0].args, "-vdepth"), "10");
+});
+
+test("unknown depth and height are sent as 0, not omitted", () => {
+  const p = loadPlugin(); // fixture video has no demux-h, mpv reports no pixel format
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(argAfter(args, "-vdepth"), "0");
+  assert.equal(argAfter(args, "-vheight"), "0");
+});
+
+// ---- quitting IINA: never touch mpv after the window starts closing ----
+// IINA 1.5.0-beta2 on macOS 27 segfaulted in mpv_get_property (address 0x48,
+// property "duration") when the page's getState poll landed after IINA had
+// destroyed the mpv core during quit. A native crash: try/catch can't help.
+
+test("after window-will-close, getState answers without calling mpv", () => {
+  const p = loadPlugin();
+  p.send("getState", {});
+  assert.equal(p.state().duration, 120);
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("getState", {});
+  assert.deepEqual(p.mpvCalls, [], "mpv must not be called while the player is going away");
+  assert.equal(p.state().duration, 120, "the last known duration is still reported");
+});
+
+test("after window-will-close, start, stop and tvState leave mpv alone", () => {
+  const p = loadPlugin();
+  p.clickMenu(); // casting, so the mirror is live
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("tvState", { rate: 0, time: 10, ended: false });
+  p.send("stop", {});
+  p.send("start", {});
+  assert.deepEqual(p.mpvCalls, []);
+  assert.equal(serves(p).length, 1, "no new cast while the player is gone");
+});
+
+// Cmd-W fires window-will-close but IINA keeps running, and the next file
+// reuses the same player, plugin instance and window: window-loaded does not
+// fire again, iina.file-loaded does.
+test("after a plain window close, the next file re-enables casting", () => {
+  const p = loadPlugin();
+  p.fire("iina.window-will-close");
+  p.fire("iina.file-loaded");
+  p.mpvCalls.length = 0;
+  p.send("start", {});
+  assert.equal(serves(p).length, 1, "start must cast again once a file has loaded");
+  p.send("getState", {});
+  assert.ok(p.mpvCalls.includes("duration"), "getState reads mpv again");
+});
+
+test("closing the window mid-cast restores mute when the next file loads", () => {
+  const p = loadPlugin();
+  p.clickMenu(); // casting: mpv is muted for the mirror
+  assert.equal(p.flags.mute, true);
+  p.fire("iina.window-will-close");
+  p.fire("iina.file-loaded");
+  assert.equal(p.flags.mute, false, "the user's pre-cast mute is restored");
+});
+
+test("a cast that ends while the window is closed still restores mute later", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("stop", {}); // ends the mirror while mpv is gone
+  assert.deepEqual(p.mpvCalls, [], "nothing touches mpv while it is gone");
+  p.fire("iina.file-loaded");
+  assert.equal(p.flags.mute, false, "the deferred mute restore lands on file-loaded");
 });

@@ -65,6 +65,20 @@ From reading the IINA source (`github.com/iina/iina`) and Apple's docs:
   SDR variant; tvOS itself is untested. CoreMedia logs why it rejects a
   master (CONTRIBUTING.md, "What you cannot test without hardware").
 - **IINA does not bundle an `ffmpeg` CLI**, only the `libav*` dylibs.
+- **ffmpeg's native `av1` decoder is hardware-only.** Without a hwaccel it
+  fails every frame ("Your platform doesn't support hardware accelerated AV1
+  decoding"), yet it is listed in `ffmpeg -decoders` of every build. AV1 needs
+  `libdav1d`, statically linked by `packaging/build-ffmpeg.sh`; `helper/job.go`
+  names it explicitly for AV1 sources.
+- **Never call `mpv.*` after `iina.window-will-close`.** On quit IINA closes
+  every window, then destroys the mpv core and leaves the plugin API's handle
+  nil; any `mpv.*` call after that segfaults IINA natively (try/catch cannot
+  help), and the sidebar page keeps polling `getState` through the quit.
+  window-will-close also fires on a plain Cmd-W, after which IINA keeps
+  running and reuses the same player, plugin instance and window for the next
+  file without firing `iina.window-loaded` again. So `plugin/main.js` answers
+  from a snapshot, and defers any mute restore, until `iina.file-loaded`: a
+  file only loads into a live mpv core.
 - **Install and update are two different mechanisms**, and satisfying one does
   not satisfy the other. Installing — by slug, or from the 1.5 store, which
   resolves to the same call — reads

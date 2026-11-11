@@ -19,6 +19,22 @@ func EstimateBandwidth(sizeBytes int64, duration float64) int {
 	return int(float64(sizeBytes) * 8 / duration * 1.1)
 }
 
+// AdvertisedBandwidth is the BANDWIDTH to advertise for this job. A remux
+// streams at the source's own rate. A re-encode streams at the encoder's
+// target instead, which for an efficient codec like AV1 can be several times
+// the source's rate; advertising the smaller figure understates the stream.
+func AdvertisedBandwidth(c JobConfig, srcSize int64) int {
+	bw := EstimateBandwidth(srcSize, c.Duration)
+	if c.Transcodes() {
+		// Video target plus the largest audio encode (640k E-AC-3), with
+		// the same 10% headroom EstimateBandwidth uses.
+		if t := int(float64(c.TranscodeBitrate()+640_000) * 1.1); t > bw {
+			return t
+		}
+	}
+	return bw
+}
+
 // EnsureVariant adds the #EXT-X-STREAM-INF line an ffmpeg master playlist
 // lacks while a stream-copy job is still running. hlsenc only learns a copied
 // stream's bitrate at the trailer, so until packaging ends its master names
