@@ -62,9 +62,10 @@ func EnsureVariant(content string, bandwidth int) string {
 
 // AddVariantAttrs adds CODECS, VIDEO-RANGE and FRAME-RATE to the master's
 // variant line (ffmpeg's, or the one EnsureVariant synthesized) when they are
-// missing; an empty field adds nothing. Whatever ffmpeg already wrote is
-// kept: its end-of-job line names H.264 + AAC itself. Values come from
-// VariantAttrs.
+// missing; an empty field adds nothing. Existing attributes are preserved,
+// except an AAC-LC CODECS entry is corrected to HE-AAC/HE-AAC v2 when
+// VariantAttrs detects backward-compatible SBR/PS signaling in init.mp4.
+// ffmpeg can miss that signaling in its end-of-job master playlist.
 func AddVariantAttrs(content string, v VariantInfo) string {
 	if v == (VariantInfo{}) {
 		return content
@@ -77,7 +78,7 @@ func AddVariantAttrs(content string, v VariantInfo) string {
 		}
 		attrs := splitAttrs(rest)
 		if v.Codecs != "" {
-			attrs = addAttr(attrs, "CODECS", quoteAttr(v.Codecs))
+			attrs = addCodecsAttr(attrs, v.Codecs)
 		}
 		if v.VideoRange != "" {
 			attrs = addAttr(attrs, "VIDEO-RANGE", v.VideoRange)
@@ -88,6 +89,36 @@ func AddVariantAttrs(content string, v VariantInfo) string {
 		lines[i] = "#EXT-X-STREAM-INF:" + strings.Join(attrs, ",")
 	}
 	return strings.Join(lines, "\n")
+}
+
+// addCodecsAttr trusts ffmpeg's codec list except for the AAC-LC core of
+// backward-compatible HE-AAC. Correct only that exact entry, preserving the
+// video codec, other entries, and their order.
+func addCodecsAttr(attrs []string, derived string) []string {
+	var aac string
+	for _, codec := range strings.Split(derived, ",") {
+		if codec == "mp4a.40.5" || codec == "mp4a.40.29" {
+			aac = codec
+			break
+		}
+	}
+	if aac != "" {
+		for i, attr := range attrs {
+			value, ok := strings.CutPrefix(attr, `CODECS="`)
+			if !ok || !strings.HasSuffix(value, `"`) {
+				continue
+			}
+			codecs := strings.Split(strings.TrimSuffix(value, `"`), ",")
+			for j, codec := range codecs {
+				if codec == "mp4a.40.2" {
+					codecs[j] = aac
+				}
+			}
+			attrs[i] = "CODECS=" + quoteAttr(strings.Join(codecs, ","))
+			return attrs
+		}
+	}
+	return addAttr(attrs, "CODECS", quoteAttr(derived))
 }
 
 // RewriteMasterPlaylist fixes up the subtitle rendition line of an

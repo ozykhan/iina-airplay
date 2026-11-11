@@ -182,16 +182,32 @@ func TestAACObjectTypes(t *testing.T) {
 		want string
 	}{
 		{"HE-AAC", []byte{0x2A, 0x10}, "mp4a.40.5"},
+		{"backward-compatible HE-AAC 5.1", []byte{0x13, 0x30, 0x56, 0xe5, 0x98}, "mp4a.40.5"},
+		{"AAC LC", []byte{0x12, 0x10}, "mp4a.40.2"},
+		// Parametric stereo is valid only for a mono AAC core.
+		{"ignore PS on multichannel core", []byte{0x13, 0x30, 0x56, 0xe5, 0x9d, 0x48, 0x80}, "mp4a.40.5"},
+		{"reserved extension frequency 13", []byte{0x13, 0x30, 0x56, 0xe5, 0xe8}, "mp4a.40.2"},
+		{"reserved extension frequency 14", []byte{0x13, 0x30, 0x56, 0xe5, 0xf0}, "mp4a.40.2"},
+		{"zero explicit extension frequency", []byte{0x13, 0x30, 0x56, 0xe5, 0xf8, 0, 0, 0}, "mp4a.40.2"},
+		{"backward-compatible HE-AAC v2 mono core", []byte{0x13, 0x08, 0x56, 0xe5, 0x9d, 0x48, 0x80}, "mp4a.40.29"},
+		{"SBR absent", []byte{0x13, 0x30, 0x56, 0xe5, 0x00}, "mp4a.40.2"},
+		{"PS absent", []byte{0x13, 0x30, 0x56, 0xe5, 0x9d, 0x48, 0x00}, "mp4a.40.5"},
+		{"core coder delay", []byte{0x13, 0x32, 0x00, 0x01, 0x5b, 0x96, 0x60}, "mp4a.40.5"},
+		{"explicit sample frequency", []byte{0x17, 0x80, 0x2e, 0xe0, 0x30, 0x56, 0xe5, 0xf8, 0x05, 0xdc, 0x00}, "mp4a.40.5"},
+		{"unsupported PCE", []byte{0x13, 0x00, 0x56, 0xe5, 0x98}, "mp4a.40.2"},
+		{"truncated sync extension", []byte{0x13, 0x30, 0x56, 0xe5}, "mp4a.40.2"},
 		// AOT 31 escapes to 32 + the next 6 bits: 42 (USAC) is 11111 001010.
 		{"escaped AOT", []byte{0xF9, 0x40}, "mp4a.40.42"},
 	} {
-		got, err := ParseInitSegment(initSegment(trak("soun", audioEntry("mp4a", 0, esds(0x40, c.asc)))))
-		if err != nil {
-			t.Fatalf("%s: %v", c.name, err)
-		}
-		if len(got.Codecs) != 1 || got.Codecs[0] != c.want {
-			t.Fatalf("%s: codecs %v, want [%s]", c.name, got.Codecs, c.want)
-		}
+		t.Run(c.name, func(t *testing.T) {
+			got, err := ParseInitSegment(initSegment(trak("soun", audioEntry("mp4a", 0, esds(0x40, c.asc)))))
+			if err != nil {
+				t.Fatalf("%s: %v", c.name, err)
+			}
+			if len(got.Codecs) != 1 || got.Codecs[0] != c.want {
+				t.Fatalf("%s: codecs %v, want [%s]", c.name, got.Codecs, c.want)
+			}
+		})
 	}
 }
 
@@ -519,5 +535,20 @@ func FuzzFragmentFrameRate(f *testing.F) {
 	f.Add(mediaSegment(traf(tfhd(1, 0), trunNoDurations(3))))
 	f.Fuzz(func(t *testing.T, b []byte) {
 		FragmentFrameRate(b, info)
+	})
+}
+
+// Exercise AudioSpecificConfig directly so fuzzing reaches the bit parser
+// without first having to preserve all the surrounding MP4 box lengths.
+func FuzzAACLCSignaledObjectType(f *testing.F) {
+	f.Add([]byte{0x13, 0x30, 0x56, 0xe5, 0x98})
+	f.Add([]byte{0x13, 0x08, 0x56, 0xe5, 0x9d, 0x48, 0x80})
+	f.Add([]byte{0x12, 0x10})
+	f.Add([]byte{})
+	f.Fuzz(func(t *testing.T, asc []byte) {
+		got := aacLCSignaledObjectType(asc)
+		if got != 2 && got != 5 && got != 29 {
+			t.Fatalf("unexpected audio object type %d", got)
+		}
 	})
 }

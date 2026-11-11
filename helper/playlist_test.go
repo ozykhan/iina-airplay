@@ -163,3 +163,28 @@ func TestAddVariantAttrsNothingToAdd(t *testing.T) {
 		t.Fatalf("a master without a variant must pass through:\n%s", got)
 	}
 }
+
+func TestAddVariantAttrsCorrectsBackwardCompatibleAAC(t *testing.T) {
+	for _, tc := range []struct{ name, existing, derived, want string }{
+		{"HE-AAC", "hvc1.2.4.L120.b0,mp4a.40.2", "hvc1.2.4.L150.90,mp4a.40.5", "hvc1.2.4.L120.b0,mp4a.40.5"},
+		{"HE-AAC v2", "hvc1.2.4.L120.b0,mp4a.40.2", "mp4a.40.29", "hvc1.2.4.L120.b0,mp4a.40.29"},
+		{"preserve other codecs and order", "mp4a.40.2,avc1.640028,wvtt", "avc1.42001e,mp4a.40.5", "mp4a.40.5,avc1.640028,wvtt"},
+		{"plain AAC", "avc1.640028,mp4a.40.2", "avc1.42001e,mp4a.40.2", "avc1.640028,mp4a.40.2"},
+		{"already HE-AAC", "avc1.640028,mp4a.40.5", "mp4a.40.29", "avc1.640028,mp4a.40.5"},
+		{"exact token only", "avc1.640028,mp4a.40.22", "mp4a.40.5", "avc1.640028,mp4a.40.22"},
+		{"unknown derived codec", "avc1.640028,mp4a.40.2", "", "avc1.640028,mp4a.40.2"},
+	} {
+		t.Run(tc.name, func(t *testing.T) {
+			master := func(codecs string) string {
+				return "#EXTM3U\n#EXT-X-STREAM-INF:BANDWIDTH=8000000,CODECS=\"" + codecs + "\",RESOLUTION=1920x1080\nindex.m3u8\n"
+			}
+			got := AddVariantAttrs(master(tc.existing), VariantInfo{Codecs: tc.derived})
+			if got != master(tc.want) {
+				t.Fatalf("got %s, want %s", got, master(tc.want))
+			}
+			if again := AddVariantAttrs(got, VariantInfo{Codecs: tc.derived}); again != got {
+				t.Fatal("rewrite is not idempotent")
+			}
+		})
+	}
+}
