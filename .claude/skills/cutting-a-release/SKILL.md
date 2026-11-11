@@ -61,8 +61,9 @@ update exists and then hands it the previous release. Publish first; merge last.
 - Committing to `main`, or merging a PR into it. `main` is a mirror of `master`;
   a commit there makes it diverge and the mirror stops, taking IINA 1.5's
   beacon with it.
-- Committing `plugin/Info.json`. It is a gitignored `make dev` symlink, and
-  `raw.githubusercontent.com` serves a symlink's target path as text, not JSON.
+- Bumping `plugin/Info.json` instead of the root one. It is a gitignored file
+  `make dev` generates, under a dev identifier and without `ghVersion`; neither
+  the package nor the update check reads it.
 
 ## When IINA still says "No update found." — or "Error checking for updates."
 

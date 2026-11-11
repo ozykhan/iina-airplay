@@ -577,7 +577,78 @@ func mp4aCodec(esds []byte) string {
 	if aot == 0 {
 		return ""
 	}
+	if aot == 2 {
+		aot = aacLCSignaledObjectType(asc)
+	}
 	return "mp4a.40." + strconv.Itoa(aot)
+}
+
+// AAC may signal SBR/PS after the AAC-LC GASpecificConfig instead of in
+// the initial object type. Advertising only the LC core rejects otherwise
+// playable HE-AAC streams when WebKit loads a master playlist. Truly implicit
+// HE-AAC has no SBR signaling in the config and remains mp4a.40.2 here.
+func aacLCSignaledObjectType(asc []byte) int {
+	pos := 5 // initial AAC-LC object type
+	read := func(n int) int {
+		if pos+n > len(asc)*8 {
+			pos = len(asc) * 8
+			return -1
+		}
+		v := 0
+		for j := 0; j < n; j++ {
+			v = v<<1 | int((asc[pos/8]>>(7-pos%8))&1)
+			pos++
+		}
+		return v
+	}
+	// Indices 13 and 14 are reserved; index 15 carries a positive 24-bit
+	// frequency. Require a complete, valid rate before trusting an extension.
+	readFrequency := func() bool {
+		index := read(4)
+		if index == 15 {
+			return read(24) > 0
+		}
+		return index >= 0 && index <= 12
+	}
+	if !readFrequency() {
+		return 2
+	}
+	channels := read(4)
+	// channelConfiguration=0 carries a variable ProgramConfigElement;
+	// do not search arbitrary bits for a sync word inside it.
+	if channels <= 0 {
+		return 2
+	}
+	// GASpecificConfig for AAC-LC.
+	if read(1) < 0 { // frameLengthFlag
+		return 2
+	}
+	core := read(1) // dependsOnCoreCoder
+	if core < 0 {
+		return 2
+	}
+	if core == 1 && read(14) < 0 {
+		return 2
+	}
+	ext := read(1) // extensionFlag
+	if ext < 0 {
+		return 2
+	}
+	if ext == 1 && read(1) != 0 { // extensionFlag3: unsupported future syntax
+		return 2
+	}
+	if read(11) != 0x2b7 || read(5) != 5 || read(1) != 1 {
+		return 2
+	}
+	if !readFrequency() {
+		return 2
+	}
+	// Parametric stereo expands a mono core to stereo; it is not a valid
+	// HE-AAC v2 declaration for an already multichannel core.
+	if channels == 1 && read(11) == 0x548 && read(1) == 1 {
+		return 29
+	}
+	return 5
 }
 
 // readDescriptor reads one MPEG-4 descriptor: a tag byte, then a size in up

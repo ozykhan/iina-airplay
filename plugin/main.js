@@ -27,6 +27,7 @@ function selectTracks(trackList) {
   if (!audio) return null;
   var r = {
     vcodec: video.codec,
+    vheight: video["demux-h"] || 0,
     acodec: audio.codec,
     achannels: audio["demux-channel-count"] || 2,
     vmap: video["ff-index"],
@@ -43,6 +44,19 @@ function selectTracks(trackList) {
     }
   }
   return r;
+}
+
+// Bit depth from an mpv pixel-format name, for the helper's re-encode branch
+// (10-bit AV1/HDR must stay 10-bit). mpv names the depth after the last "p":
+// yuv420p10, yuv420p10le, p010 (NV12's 10-bit twin), p210, gbrp12. Names with
+// no depth there (yuv420p, nv12, bgra) are 8-bit. 0 means "unknown" — nothing
+// to go on, or a hardware surface name like "videotoolbox" — and the helper
+// treats unknown as 8-bit, the pre-existing behaviour.
+function videoBitDepth(fmt) {
+  if (!fmt || typeof fmt !== "string") return 0;
+  if (fmt === "videotoolbox" || fmt.indexOf("vaapi") === 0) return 0;
+  var m = /p[0-4]?(\d{2})(?:le|be)?$/.exec(fmt);
+  return m ? parseInt(m[1], 10) : 8;
 }
 
 // selectTracks already decided what happens to subtitles; this just names the
@@ -85,6 +99,60 @@ function pluginsDirFromDataDir(dataPath) {
   if (idx === -1) return null;
   return normalized.slice(0, idx);
 }
+
+// The plugin's own identifier: the last component of that same data dir.
+// Read at runtime rather than hardcoded, because the installed plugin and a
+// `make dev` build carry different identifiers (packaging/dev-manifest.mjs)
+// and sit in the same plugins folder. Each has to find its own bin/. Returns
+// null if the path doesn't have the expected shape.
+function identifierFromDataDir(dataPath) {
+  if (!dataPath) return null;
+  var normalized = dataPath.replace(/\/+$/, "");
+  var idx = normalized.lastIndexOf("/.data/");
+  if (idx === -1) return null;
+  var id = normalized.slice(idx + "/.data/".length);
+  return id && id.indexOf("/") === -1 ? id : null;
+}
+
+// A grep basic regex for the identifier line of a plugin's Info.json, with any
+// spacing after the colon. The identifier is escaped because its dots would
+// otherwise match any character (IINA only allows word characters, "-" and
+// "." in one, but the rest of BRE's specials are escaped too). The closing
+// quote is what keeps "dev.faruk.iina-airplay" from matching
+// "dev.faruk.iina-airplay.dev".
+function identifierPattern(id) {
+  return '"identifier": *"' + id.replace(/[.*[^$\\]/g, "\\$&") + '"';
+}
+
+// Finds the bin/ of the plugin whose Info.json matches the pattern in $2,
+// among the plugin folders in $1 (IINA's plugins directory). The glob follows
+// the symlink `iina-plugin link` leaves there, so a dev build resolves to the
+// checkout's plugin/bin. Prints the bin dir and exits 0; exits 3 when the
+// plugin is found but its binaries won't run; exits 1 when it isn't found.
+//
+// com.apple.quarantine does NOT clear the executable bit (verified: a
+// quarantined file still passes `[ -x ]`), so the `-x` test alone cannot
+// catch the browser-download case docs/distribution.md and README.md promise
+// is detected. Worse, exec'ing a quarantined binary blocks on a Gatekeeper
+// dialog instead of failing fast, so check for the xattr with
+// `/usr/bin/xattr -p` (absolute path: /bin/sh via utils.exec runs with an
+// empty PATH) BEFORE anything ever execs the binary. `xattr -p` succeeding
+// (exit 0) means the attribute is present, i.e. quarantined.
+//
+// The pattern is an argument rather than spliced into the script, so nothing
+// in an identifier is ever parsed as shell.
+var BIN_DIR_LOOKUP_SCRIPT =
+  'for d in "$1"/*/; do' +
+  '  if /usr/bin/grep -qs -e "$2" "$d/Info.json"; then' +
+  '    h="$d"bin/airplay-helper; f="$d"bin/ffmpeg;' +
+  '    if [ -x "$h" ] && [ -x "$f" ] ' +
+  '        && ! /usr/bin/xattr -p com.apple.quarantine "$h" >/dev/null 2>&1 ' +
+  '        && ! /usr/bin/xattr -p com.apple.quarantine "$f" >/dev/null 2>&1; then' +
+  '      printf %s "$d"bin; exit 0;' +
+  '    fi;' +
+  '    exit 3;' +
+  '  fi;' +
+  'done; exit 1';
 
 function isValidPid(pid) {
   return typeof pid === "number" && isFinite(pid) && pid > 0;
@@ -305,9 +373,13 @@ function mirrorOnTvState(m, tvState, mpvPos, mpvPaused, now) {
 if (typeof module !== "undefined") {
   module.exports = {
     selectTracks: selectTracks,
+    videoBitDepth: videoBitDepth,
     subtitleLabel: subtitleLabel,
     parseHelperEvents: parseHelperEvents,
     pluginsDirFromDataDir: pluginsDirFromDataDir,
+    identifierFromDataDir: identifierFromDataDir,
+    identifierPattern: identifierPattern,
+    BIN_DIR_LOOKUP_SCRIPT: BIN_DIR_LOOKUP_SCRIPT,
     isValidPid: isValidPid,
     hasURLScheme: hasURLScheme,
     normalizeSource: normalizeSource,
@@ -347,6 +419,25 @@ if (typeof iina !== "undefined") {
   // everything that touches mpv runs in onMessage/menu context.
   var mirror = null;
 
+  // IINA destroys the mpv core while quitting and leaves the plugin API's
+  // handle nil, but the sidebar page keeps polling "getState" through the
+  // quit. mpv.* on that nil handle segfaults inside IINA (mpv_get_property
+  // reading address 0x48) — a native crash, not a JS exception, so try/catch
+  // cannot help. IINA closes every window before it shuts players down, so
+  // window-will-close is the last point where mpv is certainly alive.
+  //
+  // window-will-close also fires on an ordinary close (Cmd-W), after which
+  // IINA keeps running and the next file reuses this same player, plugin
+  // instance and window — and window-loaded never fires again. So the flag
+  // clears on iina.file-loaded: a file can only load into a live mpv core.
+  // Until then, answer from the last snapshot and leave mpv alone; a mute
+  // restore that came due meanwhile is deferred to that point.
+  var playerGone = false;
+  var pendingMute = null; // savedMute owed to mpv once it is live again
+  var pendingSpeed = null; // ignoredRate owed to mpv once it is live again
+  var lastSeen = { duration: 0, subs: subtitleLabel(null) };
+  event.on("iina.window-will-close", function () { playerGone = true; });
+
   // Every post to the page goes through this so the page always sees the live
   // sync block alongside the pipeline state.
   function stateForPage() {
@@ -355,12 +446,18 @@ if (typeof iina !== "undefined") {
     // before the first cast — exactly when the user is deciding whether to
     // cast — and would go stale if the subtitle track changed mid-session.
     // Safe to read mpv here: every caller is a sidebar.onMessage handler,
-    // which IINA runs on the main thread.
+    // which IINA runs on the main thread — unless the player is going away.
+    if (!playerGone) {
+      lastSeen = {
+        duration: mpv.getNumber("duration") || 0,
+        subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
+      };
+    }
     return {
       phase: state.phase, url: state.url, pct: state.pct, msg: state.msg,
       diag: state.diag || null,
-      duration: mpv.getNumber("duration") || 0,
-      subs: subtitleLabel(selectTracks(mpv.getNative("track-list") || [])),
+      duration: lastSeen.duration,
+      subs: lastSeen.subs,
       sync: mirror === null ? null : {
         seq: mirror.seq, paused: mirror.paused,
         seekTo: mirror.seekTo, startPos: mirror.startPos,
@@ -371,9 +468,14 @@ if (typeof iina !== "undefined") {
 
   function endMirror() {
     if (mirror === null) return;
-    mpv.set("mute", mirror.savedMute);
     // The TV held mpv at 1x; with the cast over, the user's speed is theirs again.
-    if (mirror.ignoredRate !== null) mpv.set("speed", mirror.ignoredRate);
+    if (playerGone) {                   // both restored on file-loaded
+      pendingMute = mirror.savedMute;
+      if (mirror.ignoredRate !== null) pendingSpeed = mirror.ignoredRate;
+    } else {
+      mpv.set("mute", mirror.savedMute);
+      if (mirror.ignoredRate !== null) mpv.set("speed", mirror.ignoredRate);
+    }
     mirror = null;
   }
 
@@ -385,28 +487,37 @@ if (typeof iina !== "undefined") {
   }
 
   event.on("mpv.pause.changed", function () {
-    if (mirror === null) return;
+    if (mirror === null || playerGone) return;
     mirror = mirrorOnMpvPause(mirror, !!mpv.getFlag("pause"));
   });
   event.on("mpv.speed.changed", function () {
-    if (mirror === null) return;
+    if (mirror === null || playerGone) return;
     mirror = mirrorOnMpvSpeed(mirror, mpv.getNumber("speed") || 1);
   });
   event.on("mpv.seek", function () {
-    if (mirror === null) return;
+    if (mirror === null || playerGone) return;
     mirror = mirrorOnMpvSeek(mirror, mpv.getNumber("time-pos") || 0, Date.now());
   });
   // A new file invalidates the whole cast: the stream on the TV is the old
   // file. file-loaded is an app event (main thread), so stopCast is safe here.
   event.on("iina.file-loaded", function () {
+    playerGone = false; // a file only loads into a live mpv core
+    if (pendingMute !== null) {
+      mpv.set("mute", pendingMute); // a cast ended while the window was closed
+      pendingMute = null;
+    }
+    if (pendingSpeed !== null) {
+      mpv.set("speed", pendingSpeed);
+      pendingSpeed = null;
+    }
     if (mirror === null) return;
     stopCast();
   });
 
   // Resolve our own install dir: @data is <plugins>/.data/<identifier>; the
-  // plugin itself lives directly under that <.../plugins> directory. Locate
-  // bin/ relative to the data dir's parent plugins folder at runtime via a
-  // glob through /bin/sh once, then cache it in @data so later launches skip
+  // plugin itself lives directly under that <.../plugins> directory, in the
+  // folder whose Info.json carries <identifier>. Find it with
+  // BIN_DIR_LOOKUP_SCRIPT once, then cache it in @data so later launches skip
   // the lookup.
   // utils.exec wipes the environment (only LC_ALL survives — no HOME), so the
   // plugins dir is derived in JS via utils.resolvePath and passed to the
@@ -415,29 +526,11 @@ if (typeof iina !== "undefined") {
     var cached = null;
     try { cached = file.read("@data/bindir.txt"); } catch (e) {}
     if (cached && cached.trim()) { cb(cached.trim(), null); return; }
-    var pluginsDir = pluginsDirFromDataDir(utils.resolvePath("@data/"));
-    if (!pluginsDir) { cb(null, "cannot resolve plugins directory"); return; }
-    // com.apple.quarantine does NOT clear the executable bit (verified: a
-    // quarantined file still passes `[ -x ]`), so the `-x` test alone cannot
-    // catch the browser-download case docs/distribution.md and README.md
-    // promise is detected. Worse, exec'ing a quarantined binary blocks on a
-    // Gatekeeper dialog instead of failing fast, so check for the xattr with
-    // `/usr/bin/xattr -p` (absolute path — /bin/sh via utils.exec runs with
-    // an empty PATH) BEFORE anything ever execs the binary. `xattr -p`
-    // succeeding (exit 0) means the attribute is present, i.e. quarantined.
-    var script =
-      'for d in "$1"/*/; do' +
-      '  if /usr/bin/grep -qs \'"identifier": *"dev.faruk.iina-airplay"\' "$d/Info.json"; then' +
-      '    h="$d"bin/airplay-helper; f="$d"bin/ffmpeg;' +
-      '    if [ -x "$h" ] && [ -x "$f" ] ' +
-      '        && ! /usr/bin/xattr -p com.apple.quarantine "$h" >/dev/null 2>&1 ' +
-      '        && ! /usr/bin/xattr -p com.apple.quarantine "$f" >/dev/null 2>&1; then' +
-      '      printf %s "$d"bin; exit 0;' +
-      '    fi;' +
-      '    exit 3;' +           // found the plugin, but its binaries won't run
-      '  fi;' +
-      'done; exit 1';
-    utils.exec("/bin/sh", ["-c", script, "sh", pluginsDir]).then(function (r) {
+    var dataDir = utils.resolvePath("@data/");
+    var pluginsDir = pluginsDirFromDataDir(dataDir);
+    var identifier = identifierFromDataDir(dataDir);
+    if (!pluginsDir || !identifier) { cb(null, "cannot resolve plugins directory"); return; }
+    utils.exec("/bin/sh", ["-c", BIN_DIR_LOOKUP_SCRIPT, "sh", pluginsDir, identifierPattern(identifier)]).then(function (r) {
       if (r.status === 0 && r.stdout) {
         file.write("@data/bindir.txt", r.stdout);
         cb(r.stdout, null);
@@ -461,6 +554,7 @@ if (typeof iina !== "undefined") {
   }
 
   function startCast() {
+    if (playerGone) return; // every line below reads mpv
     reapMirror(); // a helper-initiated teardown may have left a stale mirror
                   // un-reaped (only the getState poll normally does that); a
                   // restart must not let newMirror() capture that stale
@@ -514,6 +608,12 @@ if (typeof iina !== "undefined") {
     var lanIP = lanIPOverride(preferences.get("lanIP"));
     var vrange = videoRangeHint(mpv.getString("video-params/gamma"));
     var duration = mpv.getNumber("duration") || 0;
+    // With hardware decoding pixelformat is the surface type ("videotoolbox")
+    // and the real layout is in hw-pixelformat; with software decoding (all
+    // AV1 on pre-M3 Macs) hw-pixelformat is absent. Both return null, not
+    // throw, when unavailable.
+    var vdepth = videoBitDepth(mpv.getString("video-params/hw-pixelformat")) ||
+                 videoBitDepth(mpv.getString("video-params/pixelformat"));
     var outDir = utils.resolvePath("@tmp/hls");
     var gen = ++castGen;
     stdoutRest = "";
@@ -539,6 +639,7 @@ if (typeof iina !== "undefined") {
         "-parent", String(pid),
         "-duration", String(duration),
         "-vcodec", tracks.vcodec, "-acodec", tracks.acodec,
+        "-vdepth", String(vdepth), "-vheight", String(tracks.vheight),
         "-achannels", String(tracks.achannels),
         "-vmap", String(tracks.vmap), "-amap", String(tracks.amap),
       ];
@@ -651,7 +752,7 @@ if (typeof iina !== "undefined") {
     sidebar.onMessage("tvState", function (tv) {
       reapMirror(); // a helper-initiated teardown may have left a stale mirror
                     // un-reaped; don't mpv.set against a dead stream.
-      if (mirror === null || !tv) return;
+      if (mirror === null || !tv || playerGone) return;
       var r = mirrorOnTvState(mirror, tv, mpv.getNumber("time-pos") || 0,
                               !!mpv.getFlag("pause"), Date.now());
       mirror = r.m;

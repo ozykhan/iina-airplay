@@ -2,7 +2,7 @@ import { test } from "node:test";
 import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 const require = createRequire(import.meta.url);
-const { selectTracks, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure, videoRangeHint } = require("../main.js");
+const { selectTracks, videoBitDepth, subtitleLabel, parseHelperEvents, pluginsDirFromDataDir, identifierFromDataDir, identifierPattern, isValidPid, hasURLScheme, normalizeSource, lanIPOverride, describeMediaFailure, videoRangeHint } = require("../main.js");
 
 const mpvTracks = [
   { type: "video", id: 1, selected: true, codec: "hevc", "ff-index": 0 },
@@ -14,7 +14,7 @@ const mpvTracks = [
 test("selectTracks picks selected audio and first video", () => {
   const r = selectTracks(mpvTracks);
   assert.deepEqual(r, {
-    vcodec: "hevc", acodec: "truehd", achannels: 8, vmap: 0, amap: 2,
+    vcodec: "hevc", vheight: 0, acodec: "truehd", achannels: 8, vmap: 0, amap: 2,
     sub: { path: null, smap: 3, lang: "", title: "" }, subDropped: false,
   });
 });
@@ -118,6 +118,25 @@ test("pluginsDirFromDataDir returns null for an unexpected shape", () => {
   assert.equal(pluginsDirFromDataDir("/Users/x/somewhere/else"), null);
   assert.equal(pluginsDirFromDataDir(""), null);
   assert.equal(pluginsDirFromDataDir(null), null);
+});
+
+test("identifierFromDataDir reads the identifier off the data dir", () => {
+  const plugins = "/Users/x/Library/Application Support/com.colliderli.iina/plugins";
+  assert.equal(identifierFromDataDir(plugins + "/.data/dev.faruk.iina-airplay"), "dev.faruk.iina-airplay");
+  // The `make dev` build: its own identifier, so its own data dir.
+  assert.equal(identifierFromDataDir(plugins + "/.data/dev.faruk.iina-airplay.dev/"), "dev.faruk.iina-airplay.dev");
+});
+
+test("identifierFromDataDir returns null for an unexpected shape", () => {
+  assert.equal(identifierFromDataDir("/Users/x/somewhere/else"), null);
+  assert.equal(identifierFromDataDir("/plugins/.data/"), null);
+  assert.equal(identifierFromDataDir(""), null);
+  assert.equal(identifierFromDataDir(null), null);
+});
+
+test("identifierPattern escapes the identifier's dots and anchors on the closing quote", () => {
+  assert.equal(identifierPattern("dev.faruk.iina-airplay"), '"identifier": *"dev\\.faruk\\.iina-airplay"');
+  assert.equal(identifierPattern("a*b[c^d$e\\f"), '"identifier": *"a\\*b\\[c\\^d\\$e\\\\f"');
 });
 
 test("hasURLScheme rejects filesystem paths", () => {
@@ -279,4 +298,26 @@ test("videoRangeHint is empty for SDR, unknown and missing transfers", () => {
   for (const g of ["bt.1886", "srgb", "auto", "", null, undefined, 3]) {
     assert.equal(videoRangeHint(g), "", String(g));
   }
+});
+
+test("selectTracks carries the video height from demux-h", () => {
+  const tracks = [
+    { type: "video", id: 1, selected: true, codec: "av1", "ff-index": 0, "demux-h": 2160 },
+    { type: "audio", id: 1, selected: true, codec: "opus", "ff-index": 1 },
+  ];
+  assert.equal(selectTracks(tracks).vheight, 2160);
+});
+
+test("videoBitDepth reads mpv pixel-format names", () => {
+  const cases = {
+    "yuv420p10": 10, "yuv420p10le": 10, "p010": 10, "p210": 10, "p016": 16,
+    "yuv420p12": 12, "gbrp10": 10, "yuv444p10": 10,
+    "yuv420p": 8, "nv12": 8, "bgra": 8, "yuv444p": 8,
+    "videotoolbox": 0, "": 0,
+  };
+  for (const [fmt, want] of Object.entries(cases)) {
+    assert.equal(videoBitDepth(fmt), want, fmt);
+  }
+  assert.equal(videoBitDepth(null), 0);
+  assert.equal(videoBitDepth(undefined), 0);
 });

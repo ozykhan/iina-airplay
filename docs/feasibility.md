@@ -83,6 +83,7 @@ Dolby Vision **Profile 5**, HDR10 / HDR10+ / HLG; audio AAC, AC-3, E-AC-3, Atmos
 | PGS / VOBSUB subtitles | Cannot pass through. Burn-in forces a full video re-encode, so v0 drops them and says so; burn-in is a possible future round |
 | Dolby Vision Profile 7 (UHD remuxes) | Drop the enhancement layer, ship the HDR10 base layer |
 | H.264 10-bit, VC-1, MPEG-2 | Full re-encode (VideoToolbox HW encode) |
+| AV1 (8- or 10-bit, SDR or HDR) | Apple TV 4K has no AV1 decoder, so full re-encode to HEVC: decoded in software by dav1d, encoded by VideoToolbox. 10-bit sources stay 10-bit (Main 10 from p010le) so HDR10/HLG survive; UHD sources get a 30M target instead of 12M. ffmpeg's own `av1` decoder can't be used: it is hardware-only, and no Mac before M3 has AV1 decode hardware |
 
 IINA does **not** bundle an `ffmpeg` CLI (it links the `libav*` dylibs), so the plugin ships its
 own: a pinned static **LGPL** build, which is what keeps the plugin itself MIT-licensable. The

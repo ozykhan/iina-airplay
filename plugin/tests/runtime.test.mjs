@@ -20,6 +20,7 @@ function loadPlugin(opts = {}) {
                   speed: opts.speed !== undefined ? opts.speed : 1 };
   const sets = [];           // [name, value] pushed by mpv.set
   const events = {};         // event name -> callback registered via event.on
+  const mpvCalls = [];       // every mpv.* call, to prove none happen after the player is gone
   const stdouts = [];        // per-serve stdout callbacks, for scripting helper events
   const stderrs = [];        // per-serve stderr callbacks
   const logs = [];           // console.log lines
@@ -35,15 +36,19 @@ function loadPlugin(opts = {}) {
   const iina = {
     core: { osd: (m) => osd.push(m), pause: () => { flags.pause = true; } },
     mpv: {
-      getString: (k) => (k === "path" ? (opts.path !== undefined ? opts.path : "/movies/a.mkv")
-                       : k === "video-params/gamma" ? (opts.gamma !== undefined ? opts.gamma : "bt.1886")
-                       : null),
-      getNumber: (k) => (k === "pid" ? 4321 : k === "duration" ? 120
+      getString: (k) => {
+        mpvCalls.push(k);
+        if (k === "path") return opts.path !== undefined ? opts.path : "/movies/a.mkv";
+        if (k === "video-params/gamma") return opts.gamma !== undefined ? opts.gamma : "bt.1886";
+        if (opts.videoParams && k in opts.videoParams) return opts.videoParams[k];
+        return null;
+      },
+      getNumber: (k) => (mpvCalls.push(k), k === "pid" ? 4321 : k === "duration" ? 120
                        : k === "time-pos" ? (opts.timePos !== undefined ? opts.timePos : 42)
                        : k === "speed" ? flags.speed : 0),
-      getNative: () => trackList,
-      getFlag: (k) => !!flags[k],
-      set: (k, v) => { sets.push([k, v]); flags[k] = v; },
+      getNative: (k) => (mpvCalls.push(k), trackList),
+      getFlag: (k) => (mpvCalls.push(k), !!flags[k]),
+      set: (k, v) => { mpvCalls.push(k); sets.push([k, v]); flags[k] = v; },
     },
     event: { on: (name, cb) => { events[name] = cb; } },
     menu: {
@@ -61,7 +66,7 @@ function loadPlugin(opts = {}) {
       show: () => { shown++; },
     },
     utils: {
-      resolvePath: (p) => "/plugins/.data/dev.faruk.iina-airplay" + (p === "@tmp/hls" ? "/tmp/hls" : ""),
+      resolvePath: (p) => (opts.dataDir || "/plugins/.data/dev.faruk.iina-airplay") + (p === "@tmp/hls" ? "/tmp/hls" : ""),
       exec: (bin, args, cwd, onStdout, onStderr) => {
         execs.push({ bin, args });
         if (typeof onStdout === "function") stdouts.push(onStdout);
@@ -96,7 +101,7 @@ function loadPlugin(opts = {}) {
 
   return {
     execs, posted, osd, logs,
-    flags, sets,
+    flags, sets, mpvCalls,
     fire: (name) => { assert.ok(events[name], `no event handler for "${name}"`); events[name](); },
     helperSays: (obj) => { assert.ok(stdouts.length, "no serve running"); stdouts.at(-1)(JSON.stringify(obj) + "\n"); },
     helperStderr: (chunk) => { assert.ok(stderrs.length, "no serve running"); stderrs.at(-1)(chunk); },
@@ -228,6 +233,24 @@ test("no sub flags when no sub is selected", () => {
   assert.equal(args.indexOf("-sublang"), -1);
 });
 
+test("the bin dir lookup searches for this copy's own identifier, read off its data dir", async () => {
+  // A `make dev` build sits next to the installed plugin under a different
+  // identifier; a lookup hardcoding the installed one would hand the dev
+  // build the installed copy's helper.
+  const { identifierPattern } = require("../main.js");
+  const p = loadPlugin({
+    dataDir: "/plugins/.data/dev.faruk.iina-airplay.dev",
+    binDirLookup: { status: 0, stdout: "/plugins/iina-airplay.iinaplugin-dev.iinaplugin-dev/bin" },
+  });
+  p.clickMenu();
+  const sh = p.execs.find((e) => e.bin === "/bin/sh");
+  assert.ok(sh, "no bin dir lookup ran");
+  assert.deepEqual(sh.args.slice(3), ["/plugins", identifierPattern("dev.faruk.iina-airplay.dev")]);
+  assert.ok(!sh.args[1].includes("dev.faruk"), "the identifier must be an argument, not part of the script");
+  await new Promise((r) => setImmediate(r));
+  assert.equal(serves(p)[0].bin, "/plugins/iina-airplay.iinaplugin-dev.iinaplugin-dev/bin/airplay-helper");
+});
+
 test("a broken install names the fix instead of leaking an exec error", async () => {
   // Exit 3 is resolveBinDir's signal for "found the plugin, but its binaries
   // are missing or not executable" — a hand-copied or quarantined install.
@@ -327,14 +350,18 @@ test("an mpv speed change during a cast is passed on to the TV", () => {
   assert.equal(p.state().sync.rate, 1.5);
 });
 
-test("a TV that ignores the speed drops mpv to 1x, says so, and stop restores it", () => {
-  const p = loadPlugin({ speed: 1.25 });
-  p.clickMenu();
-  // The TV plays at 1x for 11 s with the page's playbackRate at 1.25.
+// The TV plays at 1x for 11 s with the page's playbackRate at 1.25.
+function tvIgnoresSpeed(p) {
   for (let ms = 0; ms <= 11000; ms += 500) {
     p.send("tvState", { appliedSeq: 0, pos: 42 + ms / 1000, paused: false, wireless: true,
                         ended: false, rate: 1.25, seeking: false, at: ms });
   }
+}
+
+test("a TV that ignores the speed drops mpv to 1x, says so, and stop restores it", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  tvIgnoresSpeed(p);
   assert.deepEqual(p.sets.filter(([k]) => k === "speed"), [["speed", 1]]);
   assert.ok(p.osd.some((m) => /speed/i.test(m)), "expected an OSD saying the TV ignored the speed");
   p.fire("mpv.speed.changed");         // the echo of our own set
@@ -619,4 +646,123 @@ test("a probe that settles after the cast was stopped is dropped", async () => {
   await tick();
   p.send("getState");
   assert.equal(p.state().diag, null);
+});
+
+// ---- AV1 / 10-bit: what startCast tells the helper about the video ----
+
+const argAfter = (args, flag) => args[args.indexOf(flag) + 1];
+
+test("a software-decoded 10-bit AV1 cast passes -vdepth 10 and the height", () => {
+  const p = loadPlugin({
+    tracks: [
+      { type: "video", selected: true, codec: "av1", "ff-index": 0, "demux-h": 2160 },
+      { type: "audio", selected: true, codec: "opus", "ff-index": 1, "demux-channel-count": 2 },
+    ],
+    videoParams: { "video-params/pixelformat": "yuv420p10" }, // no hw-pixelformat: software decode
+  });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(argAfter(args, "-vcodec"), "av1");
+  assert.equal(argAfter(args, "-vdepth"), "10");
+  assert.equal(argAfter(args, "-vheight"), "2160");
+});
+
+test("a hardware-decoded source reads its depth from hw-pixelformat", () => {
+  const p = loadPlugin({
+    videoParams: { "video-params/pixelformat": "videotoolbox", "video-params/hw-pixelformat": "p010" },
+  });
+  p.clickMenu();
+  assert.equal(argAfter(serves(p)[0].args, "-vdepth"), "10");
+});
+
+test("unknown depth and height are sent as 0, not omitted", () => {
+  const p = loadPlugin(); // fixture video has no demux-h, mpv reports no pixel format
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(argAfter(args, "-vdepth"), "0");
+  assert.equal(argAfter(args, "-vheight"), "0");
+});
+
+// ---- quitting IINA: never touch mpv after the window starts closing ----
+// IINA 1.5.0-beta2 on macOS 27 segfaulted in mpv_get_property (address 0x48,
+// property "duration") when the page's getState poll landed after IINA had
+// destroyed the mpv core during quit. A native crash: try/catch can't help.
+
+test("after window-will-close, getState answers without calling mpv", () => {
+  const p = loadPlugin();
+  p.send("getState", {});
+  assert.equal(p.state().duration, 120);
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("getState", {});
+  assert.deepEqual(p.mpvCalls, [], "mpv must not be called while the player is going away");
+  assert.equal(p.state().duration, 120, "the last known duration is still reported");
+});
+
+test("after window-will-close, start, stop and tvState leave mpv alone", () => {
+  const p = loadPlugin();
+  p.clickMenu(); // casting, so the mirror is live
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("tvState", { rate: 0, time: 10, ended: false });
+  p.send("stop", {});
+  p.send("start", {});
+  assert.deepEqual(p.mpvCalls, []);
+  assert.equal(serves(p).length, 1, "no new cast while the player is gone");
+});
+
+// Cmd-W fires window-will-close but IINA keeps running, and the next file
+// reuses the same player, plugin instance and window: window-loaded does not
+// fire again, iina.file-loaded does.
+test("after a plain window close, the next file re-enables casting", () => {
+  const p = loadPlugin();
+  p.fire("iina.window-will-close");
+  p.fire("iina.file-loaded");
+  p.mpvCalls.length = 0;
+  p.send("start", {});
+  assert.equal(serves(p).length, 1, "start must cast again once a file has loaded");
+  p.send("getState", {});
+  assert.ok(p.mpvCalls.includes("duration"), "getState reads mpv again");
+});
+
+test("closing the window mid-cast restores mute when the next file loads", () => {
+  const p = loadPlugin();
+  p.clickMenu(); // casting: mpv is muted for the mirror
+  assert.equal(p.flags.mute, true);
+  p.fire("iina.window-will-close");
+  p.fire("iina.file-loaded");
+  assert.equal(p.flags.mute, false, "the user's pre-cast mute is restored");
+});
+
+test("a cast that ends while the window is closed still restores mute later", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("stop", {}); // ends the mirror while mpv is gone
+  assert.deepEqual(p.mpvCalls, [], "nothing touches mpv while it is gone");
+  p.fire("iina.file-loaded");
+  assert.equal(p.flags.mute, false, "the deferred mute restore lands on file-loaded");
+});
+
+test("after window-will-close, a speed change leaves mpv alone", () => {
+  const p = loadPlugin();
+  p.clickMenu();
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.fire("mpv.speed.changed");
+  assert.deepEqual(p.mpvCalls, []);
+});
+
+test("a speed the TV ignored is restored later if the cast ends while the window is closed", () => {
+  const p = loadPlugin({ speed: 1.25 });
+  p.clickMenu();
+  tvIgnoresSpeed(p);
+  assert.equal(p.flags.speed, 1);
+  p.fire("iina.window-will-close");
+  p.mpvCalls.length = 0;
+  p.send("stop", {});
+  assert.deepEqual(p.mpvCalls, [], "nothing touches mpv while it is gone");
+  p.fire("iina.file-loaded");
+  assert.equal(p.flags.speed, 1.25, "the deferred speed restore lands on file-loaded");
 });

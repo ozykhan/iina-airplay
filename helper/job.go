@@ -22,6 +22,11 @@ type JobConfig struct {
 	AChannels int
 	VMap      int
 	AMap      int
+	// VDepth is the source video's bit depth (0 = unknown, treated as 8) and
+	// VHeight its height in pixels (0 = unknown). Both only matter when the
+	// video is re-encoded: they pick the HEVC profile and the target bitrate.
+	VDepth  int
+	VHeight int
 	// Subtitles are optional; zero values mean "no subtitle track". SubMap
 	// holds the ff-index as a string so the zero value can't be mistaken
 	// for stream 0. SubPath (external file, fed as input 1) wins over SubMap.
@@ -43,14 +48,38 @@ func (c JobConfig) PlaylistName() string {
 	return "index.m3u8"
 }
 
+// Transcodes reports whether the video is re-encoded rather than copied.
+// Apple TV takes H.264 and HEVC as-is; everything else (AV1, VP9, MPEG-2,
+// VC-1, ...) goes through hevc_videotoolbox.
+func (c JobConfig) Transcodes() bool { return c.VCodec != "h264" && c.VCodec != "hevc" }
+
+// TranscodeBitrate is the hevc_videotoolbox target in bits/s. 12M suits
+// 1080p; UHD sources (common for AV1) get more, since 12M visibly smears
+// 4K detail. Unknown height keeps the long-standing 12M.
+func (c JobConfig) TranscodeBitrate() int {
+	if c.VHeight > 1080 {
+		return 30_000_000
+	}
+	return 12_000_000
+}
+
 // BuildArgs ports the proven serve.sh recipe (docs/prototype.md) to a live
 // event playlist. Apple TV compatibility matrix: docs/feasibility.md.
 func BuildArgs(c JobConfig) []string {
 	args := []string{
 		"-hide_banner", "-nostats", "-loglevel", "warning", "-y",
 		"-progress", "pipe:1",
-		"-i", c.Source,
 	}
+	if c.VCodec == "av1" {
+		// ffmpeg's native "av1" decoder is hardware-only: without a hwaccel
+		// it fails every frame ("Your platform doesn't support hardware
+		// accelerated AV1 decoding"), and no Mac before M3 has AV1 decode
+		// hardware. dav1d decodes in software on every Mac; name it
+		// explicitly so a build without it fails loudly at startup instead
+		// of silently falling back to the decoder that can't work.
+		args = append(args, "-c:v", "libdav1d")
+	}
+	args = append(args, "-i", c.Source)
 	if c.SubPath != "" {
 		args = append(args, "-i", c.SubPath)
 	}
@@ -72,7 +101,17 @@ func BuildArgs(c JobConfig) []string {
 	case "hevc":
 		args = append(args, "-c:v", "copy", "-tag:v", "hvc1")
 	default:
-		args = append(args, "-c:v", "hevc_videotoolbox", "-b:v", "12M", "-tag:v", "hvc1")
+		args = append(args, "-c:v", "hevc_videotoolbox",
+			"-b:v", strconv.Itoa(c.TranscodeBitrate()/1_000_000)+"M", "-tag:v", "hvc1")
+		if c.VDepth >= 10 {
+			// 10-bit sources (most AV1, all HDR) stay 10-bit: Main 10 from
+			// p010le. Left to itself ffmpeg would hand VideoToolbox an 8-bit
+			// frame, banding every gradient and breaking HDR10/HLG, whose
+			// PQ/HLG transfer only means anything at 10 bits. The colour
+			// tags (bt2020, smpte2084/arib-std-b67) carry over from the
+			// decoded frames on their own.
+			args = append(args, "-profile:v", "main10", "-pix_fmt", "p010le")
+		}
 	}
 	switch c.ACodec {
 	case "aac", "ac3", "eac3":

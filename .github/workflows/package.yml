@@ -56,9 +56,11 @@ jobs:
 
       # nasm assembles the x86_64 slice's hand-written assembly; arm64 never
       # needs it, so an arm64-only build gives no hint it is missing.
+      # meson, ninja and pkgconf build the static dav1d (AV1 decoding) and let
+      # ffmpeg's configure find it.
       # ffmpeg authors the test fixtures, same reason as in ci.yml.
       - name: Install build and fixture dependencies
-        run: brew install nasm ffmpeg
+        run: brew install nasm meson ninja pkgconf ffmpeg
 
       # Before the long build, so an ordinary unit-test failure costs seconds.
       - run: make test
@@ -84,10 +86,16 @@ jobs:
       # hashFiles() hashes a list of per-file digests, not the file's own
       # digest — they just always change together.)
       #
-      # Four files, not the tree: the configured source tree is gigabytes and
-      # nothing downstream reads it — except COPYING.LGPLv2.1, which pack.sh
-      # hard-fails without because LGPL 2.1 §1 requires shipping the license
-      # text itself.
+      # Five files, not the tree: the configured source tree is gigabytes and
+      # nothing downstream reads it — except the two license texts, which
+      # pack.sh hard-fails without: COPYING.LGPLv2.1 (LGPL 2.1 §1 requires
+      # shipping the license text itself) and dav1d-src/COPYING (dav1d is
+      # statically linked, and BSD-2-Clause requires reproducing its notice).
+      #
+      # The "-files2" segment marks this five-file set: entries saved under
+      # the earlier four-file set lack dav1d's COPYING, and the key would
+      # otherwise still match them while build-ffmpeg.sh is unchanged. Bump it
+      # whenever the path list below changes.
       #
       # No restore-keys: a near-miss restore has no value, since a mismatched
       # stamp forces a full rebuild anyway.
@@ -100,7 +108,8 @@ jobs:
             build/ffmpeg/VERSION
             build/ffmpeg/.recipe-hash
             build/ffmpeg/src/COPYING.LGPLv2.1
-          key: ffmpeg-universal-macos15-${{ hashFiles('packaging/build-ffmpeg.sh') }}
+            build/ffmpeg/dav1d-src/COPYING
+          key: ffmpeg-universal-macos15-files2-${{ hashFiles('packaging/build-ffmpeg.sh') }}
 
       # A no-op on a cache hit, via the .recipe-hash stamp it writes itself.
       - name: Build the pinned LGPL ffmpeg
@@ -120,6 +129,7 @@ jobs:
             build/ffmpeg/VERSION
             build/ffmpeg/.recipe-hash
             build/ffmpeg/src/COPYING.LGPLv2.1
+            build/ffmpeg/dav1d-src/COPYING
           key: ${{ steps.restore-ffmpeg-cache.outputs.cache-primary-key }}
 
       - name: Build the universal helper

@@ -25,5 +25,5 @@ maintainer what to check before merging.
 ## Checklist
 
 - [ ] Conventional-commit style title (`feat:`, `fix:`, `docs:`, …)
-- [ ] `plugin/Info.json` is not committed (it's a `make dev` symlink)
+- [ ] `plugin/Info.json` is not committed (`make dev` generates it)
 - [ ] Docs updated if behaviour or the build changed

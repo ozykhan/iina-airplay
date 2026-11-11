@@ -57,6 +57,87 @@ func TestBuildArgsUnsupportedVideo(t *testing.T) {
 	argsHave(t, args, "-c:v", "hevc_videotoolbox", "-b:v", "12M", "-tag:v", "hvc1")
 }
 
+func TestBuildArgsAV1UsesDav1d(t *testing.T) {
+	c := baseCfg()
+	c.VCodec = "av1"
+	args := BuildArgs(c)
+	// The decoder choice is an input option: it must come before -i.
+	argsHave(t, args, "-c:v", "libdav1d", "-i", c.Source)
+	argsHave(t, args, "-c:v", "hevc_videotoolbox")
+}
+
+func TestBuildArgsNonAV1DoesNotForceDecoder(t *testing.T) {
+	for _, codec := range []string{"hevc", "h264", "vp9", "mpeg2video"} {
+		c := baseCfg()
+		c.VCodec = codec
+		if slices.Contains(BuildArgs(c), "libdav1d") {
+			t.Fatalf("%s source must not force the dav1d decoder", codec)
+		}
+	}
+}
+
+func TestBuildArgsTenBitTranscodeStaysTenBit(t *testing.T) {
+	c := baseCfg()
+	c.VCodec, c.VDepth = "av1", 10
+	argsHave(t, BuildArgs(c), "-tag:v", "hvc1", "-profile:v", "main10", "-pix_fmt", "p010le")
+}
+
+func TestBuildArgsEightBitTranscodeUnchanged(t *testing.T) {
+	for _, depth := range []int{0, 8} {
+		c := baseCfg()
+		c.VCodec, c.VDepth = "vp9", depth
+		args := BuildArgs(c)
+		if slices.Contains(args, "main10") || slices.Contains(args, "p010le") {
+			t.Fatalf("depth %d: 8-bit/unknown source must keep the default profile", depth)
+		}
+	}
+}
+
+func TestBuildArgsTenBitCopyUntouched(t *testing.T) {
+	// HEVC Main 10 is copied bit-for-bit; depth must not leak into a copy.
+	c := baseCfg()
+	c.VDepth = 10
+	if slices.Contains(BuildArgs(c), "p010le") {
+		t.Fatal("copied HEVC must not get a pixel-format conversion")
+	}
+}
+
+func TestTranscodeBitrateByHeight(t *testing.T) {
+	for _, tc := range []struct{ h, want int }{
+		{0, 12_000_000}, {720, 12_000_000}, {1080, 12_000_000}, {1600, 30_000_000}, {2160, 30_000_000},
+	} {
+		c := baseCfg()
+		c.VCodec, c.VHeight = "av1", tc.h
+		if got := c.TranscodeBitrate(); got != tc.want {
+			t.Fatalf("height %d: got %d, want %d", tc.h, got, tc.want)
+		}
+	}
+	c := baseCfg()
+	c.VCodec, c.VHeight = "av1", 2160
+	argsHave(t, BuildArgs(c), "-c:v", "hevc_videotoolbox", "-b:v", "30M", "-tag:v", "hvc1")
+}
+
+func TestAdvertisedBandwidth(t *testing.T) {
+	// 1 GB over 5400 s is ~1.6 Mb/s — a typical AV1 film. Re-encoded to
+	// 12M HEVC, advertising the source rate would understate it ~8x.
+	c := baseCfg()
+	c.VCodec = "av1"
+	if got := AdvertisedBandwidth(c, 1_000_000_000); got < 12_000_000 {
+		t.Fatalf("transcode advertised %d, below the 12M encode", got)
+	}
+	// A remux keeps advertising the source's own rate.
+	c.VCodec = "hevc"
+	if got, want := AdvertisedBandwidth(c, 1_000_000_000), EstimateBandwidth(1_000_000_000, 5400); got != want {
+		t.Fatalf("remux advertised %d, want source estimate %d", got, want)
+	}
+	// A transcode whose source already streams faster keeps the larger figure.
+	c.VCodec = "vc1"
+	big := int64(40_000_000_000)
+	if got, want := AdvertisedBandwidth(c, big), EstimateBandwidth(big, 5400); got != want {
+		t.Fatalf("high-rate transcode advertised %d, want %d", got, want)
+	}
+}
+
 func TestBuildArgsAudioCopy(t *testing.T) {
 	for _, codec := range []string{"aac", "ac3", "eac3"} {
 		c := baseCfg()
