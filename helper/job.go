@@ -29,12 +29,14 @@ type JobConfig struct {
 	VHeight int
 	// Subtitles are optional; zero values mean "no subtitle track". SubMap
 	// holds the ff-index as a string so the zero value can't be mistaken
-	// for stream 0. SubPath (external file, fed as input 1) wins over SubMap.
-	SubPath  string
-	SubMap   string
-	SubLang  string
-	SubName  string
-	Duration float64
+	// for stream 0. BurnInSubMap selects an embedded bitmap subtitle instead
+	// of producing a WebVTT rendition. SubPath is a text file input.
+	SubPath      string
+	SubMap       string
+	BurnInSubMap string
+	SubLang      string
+	SubName      string
+	Duration     float64
 }
 
 func (c JobConfig) HasSub() bool { return c.SubPath != "" || c.SubMap != "" }
@@ -49,9 +51,11 @@ func (c JobConfig) PlaylistName() string {
 }
 
 // Transcodes reports whether the video is re-encoded rather than copied.
-// Apple TV takes H.264 and HEVC as-is; everything else (AV1, VP9, MPEG-2,
-// VC-1, ...) goes through hevc_videotoolbox.
-func (c JobConfig) Transcodes() bool { return c.VCodec != "h264" && c.VCodec != "hevc" }
+// Image-subtitle burn-in always re-encodes; otherwise Apple TV takes H.264 and
+// HEVC as-is and other codecs go through hevc_videotoolbox.
+func (c JobConfig) Transcodes() bool {
+	return c.BurnInSubMap != "" || (c.VCodec != "h264" && c.VCodec != "hevc")
+}
 
 // TranscodeBitrate is the hevc_videotoolbox target in bits/s. 12M suits
 // 1080p; UHD sources (common for AV1) get more, since 12M visibly smears
@@ -83,24 +87,31 @@ func BuildArgs(c JobConfig) []string {
 	if c.SubPath != "" {
 		args = append(args, "-i", c.SubPath)
 	}
-	args = append(args,
-		"-map", "0:"+strconv.Itoa(c.VMap),
-		"-map", "0:"+strconv.Itoa(c.AMap),
-	)
-	switch {
-	case c.SubPath != "":
-		args = append(args, "-map", "1:0", "-dn")
-	case c.SubMap != "":
-		args = append(args, "-map", "0:"+c.SubMap, "-dn")
-	default:
-		args = append(args, "-sn", "-dn")
+	if c.BurnInSubMap != "" {
+		args = append(args,
+			"-filter_complex", fmt.Sprintf("[0:%d][0:%s]overlay[burned]", c.VMap, c.BurnInSubMap),
+			"-map", "[burned]", "-map", "0:"+strconv.Itoa(c.AMap), "-sn", "-dn",
+		)
+	} else {
+		args = append(args,
+			"-map", "0:"+strconv.Itoa(c.VMap),
+			"-map", "0:"+strconv.Itoa(c.AMap),
+		)
+		switch {
+		case c.SubPath != "":
+			args = append(args, "-map", "1:0", "-dn")
+		case c.SubMap != "":
+			args = append(args, "-map", "0:"+c.SubMap, "-dn")
+		default:
+			args = append(args, "-sn", "-dn")
+		}
 	}
-	switch c.VCodec {
-	case "h264":
+	if !c.Transcodes() {
 		args = append(args, "-c:v", "copy")
-	case "hevc":
-		args = append(args, "-c:v", "copy", "-tag:v", "hvc1")
-	default:
+		if c.VCodec == "hevc" {
+			args = append(args, "-tag:v", "hvc1")
+		}
+	} else {
 		args = append(args, "-c:v", "hevc_videotoolbox",
 			"-b:v", strconv.Itoa(c.TranscodeBitrate()/1_000_000)+"M", "-tag:v", "hvc1")
 		if c.VDepth >= 10 {

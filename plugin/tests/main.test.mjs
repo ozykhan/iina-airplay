@@ -68,9 +68,26 @@ test("selectTracks drops an external sub with no usable path", () => {
   assert.equal(r.subDropped, true);
 });
 
-test("selectTracks drops image subs (PGS) and flags it", () => {
+test("selectTracks marks selected embedded PGS subtitles for burn-in", () => {
   const tracks = mpvTracks.map(t =>
     t.type === "sub" ? { ...t, codec: "hdmv_pgs_subtitle" } : t);
+  const r = selectTracks(tracks);
+  assert.deepEqual(r.sub, { path: null, smap: 3, lang: "", title: "", burnIn: true });
+  assert.equal(r.subDropped, false);
+});
+
+test("selectTracks marks selected embedded VobSub subtitles for burn-in", () => {
+  const tracks = mpvTracks.map(t =>
+    t.type === "sub" ? { ...t, codec: "dvd_subtitle" } : t);
+  const r = selectTracks(tracks);
+  assert.deepEqual(r.sub, { path: null, smap: 3, lang: "", title: "", burnIn: true });
+  assert.equal(r.subDropped, false);
+});
+
+test("selectTracks still drops external image subtitles", () => {
+  const tracks = mpvTracks.map(t => t.type === "sub"
+    ? { ...t, codec: "hdmv_pgs_subtitle", external: true, "external-filename": "/subs/en.sup" }
+    : t);
   const r = selectTracks(tracks);
   assert.equal(r.sub, null);
   assert.equal(r.subDropped, true);
@@ -212,7 +229,7 @@ test("subtitleLabel warns when the subtitle track was dropped", () => {
   const tracks = selectTracks([
     { type: "video", selected: true, codec: "hevc", "ff-index": 0 },
     { type: "audio", selected: true, codec: "aac", "ff-index": 1 },
-    { type: "sub", selected: true, codec: "hdmv_pgs_subtitle", "ff-index": 2 },
+    { type: "sub", selected: true, codec: "some_future_codec", "ff-index": 2 },
   ]);
   assert.deepEqual(subtitleLabel(tracks),
     { label: "Subtitles not supported", warn: true });

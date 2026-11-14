@@ -1,7 +1,9 @@
 # Subtitle support: selected text track → WebVTT rendition
 
 Date: 2026-08-29. Status: approved by user (design conversation), pending
-implementation.
+implementation of the text-subtitle path. The image-subtitle policy in this
+baseline is superseded by
+[the selected embedded image-subtitle burn-in design](2026-11-14-image-subtitle-burn-in-design.md).
 
 ## Goal
 

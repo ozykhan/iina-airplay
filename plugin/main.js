@@ -6,10 +6,10 @@
 
 // ---- pure functions (node-testable) ----
 
-// Sub codecs ffmpeg can convert to WebVTT. Image codecs (hdmv_pgs_subtitle,
-// dvd_subtitle) and anything unknown can't pass through to the TV without a
-// burn-in re-encode — out of scope, see docs/superpowers/specs/.
+// Text subtitles become a WebVTT rendition; embedded bitmap subtitles are
+// composited into the video. Unknown codecs and external bitmap files stay unsupported.
 var TEXT_SUB_CODECS = { subrip: 1, srt: 1, ass: 1, ssa: 1, mov_text: 1, webvtt: 1, text: 1 };
+var IMAGE_SUB_CODECS = { hdmv_pgs_subtitle: 1, dvd_subtitle: 1 };
 
 function selectTracks(trackList) {
   var video = null, audio = null, firstAudio = null, sub = null;
@@ -37,10 +37,12 @@ function selectTracks(trackList) {
   };
   if (sub) {
     var path = sub.external ? (sub["external-filename"] || null) : null;
-    if (!TEXT_SUB_CODECS[sub.codec] || (sub.external && !path)) {
-      r.subDropped = true;
-    } else {
+    if (IMAGE_SUB_CODECS[sub.codec] && !sub.external) {
+      r.sub = { path: null, smap: sub["ff-index"], lang: sub.lang || "", title: sub.title || "", burnIn: true };
+    } else if (TEXT_SUB_CODECS[sub.codec] && (!sub.external || path)) {
       r.sub = { path: path, smap: sub["ff-index"], lang: sub.lang || "", title: sub.title || "" };
+    } else {
+      r.subDropped = true;
     }
   }
   return r;
@@ -561,9 +563,12 @@ if (typeof iina !== "undefined") {
         "-vmap", String(tracks.vmap), "-amap", String(tracks.amap),
       ];
       if (tracks.sub) {
-        if (tracks.sub.path) serveArgs.push("-subpath", tracks.sub.path);
-        else serveArgs.push("-smap", String(tracks.sub.smap));
-        serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
+        if (tracks.sub.burnIn) serveArgs.push("-burninsmap", String(tracks.sub.smap));
+        else {
+          if (tracks.sub.path) serveArgs.push("-subpath", tracks.sub.path);
+          else serveArgs.push("-smap", String(tracks.sub.smap));
+          serveArgs.push("-sublang", tracks.sub.lang, "-subname", tracks.sub.title);
+        }
       }
       if (lanIP) serveArgs.push("-ip", lanIP);
       if (vrange) serveArgs.push("-vrange", vrange);

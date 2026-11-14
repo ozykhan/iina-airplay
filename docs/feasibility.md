@@ -48,8 +48,10 @@ a local port and talk to the LAN.
    `iina.mpv`, and spawns the **Go helper** with `utils.exec` by absolute path out of the
    package's own `bin/`.
 2. **Helper** decides remux vs. transcode from the track info it is handed, runs the bundled
-   `ffmpeg` into fMP4/HLS, and serves the output directory on `0.0.0.0` on a free port. It
-   reports `ready` / `progress` / `packaged` / `error` as JSON lines on stdout, and dies with
+   `ffmpeg` into fMP4/HLS, and serves the output directory on `0.0.0.0` on a free port. A
+   selected embedded image subtitle is composited into the video during this job, which requires
+   decoding and re-encoding the video; all other casts retain the existing remux/transcode path.
+   It reports `ready` / `progress` / `packaged` / `error` as JSON lines on stdout, and dies with
    IINA via a PPID watchdog.
 3. **The AirPlay send happens in web content, not in a helper.** The plugin's sidebar tab is a
    `WKWebView` with a default configuration, where `allowsAirPlayForMediaPlayback` defaults to
@@ -80,7 +82,7 @@ Dolby Vision **Profile 5**, HDR10 / HDR10+ / HLG; audio AAC, AC-3, E-AC-3, Atmos
 | MKV container, H.264/HEVC inside | Remux to fMP4/HLS — no re-encode, fast |
 | DTS / DTS-HD / TrueHD | Transcode to E-AC-3 or AAC — cheap |
 | Text subtitles (SRT/ASS/SSA, embedded or external) | Converted to WebVTT and carried as an HLS rendition the TV shows in its own subtitle menu; ASS styling flattens to plain text |
-| PGS / VOBSUB subtitles | Cannot pass through. Burn-in forces a full video re-encode, so v0 drops them and says so; burn-in is a possible future round |
+| Selected embedded PGS / VOBSUB subtitles | Composite into video frames during the FFmpeg cast job; forces video re-encoding. Text subtitles remain WebVTT renditions, and casts without image subtitles keep the existing remux/transcode path |
 | Dolby Vision Profile 7 (UHD remuxes) | Drop the enhancement layer, ship the HDR10 base layer |
 | H.264 10-bit, VC-1, MPEG-2 | Full re-encode (VideoToolbox HW encode) |
 | AV1 (8- or 10-bit, SDR or HDR) | Apple TV 4K has no AV1 decoder, so full re-encode to HEVC: decoded in software by dav1d, encoded by VideoToolbox. 10-bit sources stay 10-bit (Main 10 from p010le) so HDR10/HLG survive; UHD sources get a 30M target instead of 12M. ffmpeg's own `av1` decoder can't be used: it is hardware-only, and no Mac before M3 has AV1 decode hardware |
