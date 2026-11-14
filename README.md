@@ -21,8 +21,8 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
   original bitstream bit-for-bit. Only unusual codecs get re-encoded, through VideoToolbox.
 - **IINA is the remote, both ways.** Play, pause and seek in IINA drive the Apple TV;
   the Siri Remote comes back the other way.
-- **Your subtitles come along.** The text track you selected in IINA (embedded or
-  external SRT/ASS) is carried as a WebVTT rendition the TV shows through its own menu.
+- **Your subtitles come along.** Selected text tracks (embedded or external SRT/ASS)
+  appear in the TV's subtitle menu; selected embedded PGS/VobSub tracks are burned into the video.
 - **Nothing to install first.** A pinned LGPL ffmpeg build and a small Go helper ship
   inside the package. No Homebrew, no runtime downloads, works offline.
 
@@ -30,7 +30,7 @@ macOS 12+ · any AirPlay 2 receiver · MIT · everything bundled, nothing downlo
 
 |                 |                                                                                                                                                                     |
 | --------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
-| Image subtitles | PGS/VOBSUB are dropped with a notice rather than burned in. SRT/ASS work                                                                                            |
+| Image subtitles | Selected embedded PGS/VobSub subtitles are burned into the video and require re-encoding. External image subtitles remain unsupported. SRT/ASS work |
 | Start position  | The TV starts from the beginning, then jumps to where IINA was once packaging has reached that point. Best-effort: if the TV ends up elsewhere, IINA follows the TV |
 | Disk space      | A cast writes a second copy of the file (the HLS remux) to IINA's temp directory for as long as it runs; it is deleted when the cast stops or IINA quits            |
 

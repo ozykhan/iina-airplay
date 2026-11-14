@@ -282,6 +282,21 @@ func TestBuildArgsNoSubByteIdentical(t *testing.T) {
 	}
 }
 
+func TestBuildArgsImageSubtitleBurnIn(t *testing.T) {
+	c := baseCfg()
+	c.BurnInSubMap = "3"
+	args := BuildArgs(c)
+	argsHave(t, args, "-filter_complex", "[0:0][0:3]overlay[burned]")
+	argsHave(t, args, "-map", "[burned]", "-map", "0:1", "-sn", "-dn")
+	argsHave(t, args, "-c:v", "hevc_videotoolbox")
+	if slices.Contains(args, "-c:s") || slices.Contains(args, "-var_stream_map") {
+		t.Fatalf("burned image subtitle must not produce a subtitle rendition: %q", args)
+	}
+	if !c.Transcodes() {
+		t.Fatal("burn-in must force video re-encoding for an HEVC source")
+	}
+}
+
 func TestBuildArgsEmbeddedSub(t *testing.T) {
 	c := baseCfg()
 	c.SubMap = "3"

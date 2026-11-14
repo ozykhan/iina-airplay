@@ -185,6 +185,49 @@ func TestServeEndToEndWithStub(t *testing.T) {
 	}
 }
 
+func TestServeBurnInFlagProducesVideoPlaylistWithoutSubtitleRendition(t *testing.T) {
+	bin := buildHelper(t)
+	out := t.TempDir()
+	argsLog := filepath.Join(t.TempDir(), "args")
+	stub := filepath.Join(t.TempDir(), "ffmpeg")
+	stubScript := fmt.Sprintf("#!/bin/sh\nprintf '%%s\\n' \"$@\" > %q\necho '#EXTM3U' > %q/index.m3u8\ntrap 'exit 0' TERM\nsleep 60\n", argsLog, out)
+	if err := os.WriteFile(stub, []byte(stubScript), 0o755); err != nil {
+		t.Fatal(err)
+	}
+
+	cmd := exec.Command(bin, "serve",
+		"-source", "/dev/null", "-out", out, "-ffmpeg", stub,
+		"-parent", fmt.Sprint(os.Getpid()), "-duration", "60",
+		"-vcodec", "h264", "-acodec", "aac", "-achannels", "2", "-vmap", "0", "-amap", "1",
+		"-burninsmap", "2")
+	stdout, err := cmd.StdoutPipe()
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := cmd.Start(); err != nil {
+		t.Fatal(err)
+	}
+	defer func() { cmd.Process.Kill(); cmd.Wait() }()
+
+	readyURL := waitReady(t, stdout, 15*time.Second)
+	if !strings.HasSuffix(readyURL, "/index.m3u8") {
+		t.Fatalf("burn-in must advertise a video-only playlist, got %q", readyURL)
+	}
+	args, err := os.ReadFile(argsLog)
+	if err != nil {
+		t.Fatal(err)
+	}
+	got := string(args)
+	for _, want := range []string{"-filter_complex", "[0:0][0:2]overlay[burned]", "[burned]", "hevc_videotoolbox", "-sn"} {
+		if !strings.Contains(got, want) {
+			t.Errorf("ffmpeg args missing %q:\n%s", want, got)
+		}
+	}
+	if strings.Contains(got, "-c:s") || strings.Contains(got, "-var_stream_map") {
+		t.Fatalf("burn-in must not create a subtitle rendition:\n%s", got)
+	}
+}
+
 func TestServeWithSubsAdvertisesRewrittenMaster(t *testing.T) {
 	bin := buildHelper(t)
 	out := t.TempDir()

@@ -211,14 +211,27 @@ test("serve args carry -subpath for an external sub, not -smap", () => {
   assert.equal(args.indexOf("-smap"), -1);
 });
 
-test("image subs cast without subs and OSD the reason", () => {
+test("embedded image subtitles use burn-in, not a subtitle rendition", () => {
   const p = loadPlugin({ tracks: [...baseTracks,
     { type: "sub", selected: true, codec: "hdmv_pgs_subtitle", "ff-index": 2 }] });
   p.clickMenu();
   assert.equal(serves(p).length, 1, "cast must still start");
   const args = serves(p)[0].args;
+  assert.notEqual(args.indexOf("-burninsmap"), -1);
+  assert.equal(args[args.indexOf("-burninsmap") + 1], "2");
   assert.equal(args.indexOf("-smap"), -1);
   assert.equal(args.indexOf("-subpath"), -1);
+  assert.equal(p.osd.some(m => /subtitle.*can't be cast/i.test(m)), false);
+});
+
+test("external image subtitles are still dropped with an OSD warning", () => {
+  const p = loadPlugin({ tracks: [...baseTracks,
+    { type: "sub", selected: true, codec: "hdmv_pgs_subtitle", "ff-index": 2,
+      external: true, "external-filename": "/subs/en.sup" }] });
+  p.clickMenu();
+  const args = serves(p)[0].args;
+  assert.equal(args.indexOf("-burninsmap"), -1);
+  assert.equal(args.indexOf("-smap"), -1);
   assert.ok(p.osd.some(m => /subtitle/i.test(m)), "expected an OSD about dropped subtitles");
 });
 

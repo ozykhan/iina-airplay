@@ -35,8 +35,9 @@ func findFFmpeg(t *testing.T) string {
 
 // systemFFmpegCandidates is the search list for findSystemFFmpeg, factored
 // out so the fallback-vs-fatal decision in locateSystemFFmpeg can be unit
-// tested with fake paths instead of the real filesystem.
-var systemFFmpegCandidates = []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg"}
+// tested with fake paths instead of the real filesystem. Prefer Homebrew on
+// macOS; /usr/bin supports Linux test hosts.
+var systemFFmpegCandidates = []string{"/opt/homebrew/bin/ffmpeg", "/usr/local/bin/ffmpeg", "/usr/bin/ffmpeg"}
 
 // locateSystemFFmpeg is the pure decision logic behind findSystemFFmpeg: given
 // a list of candidate paths, a stat function, and whether a bundled-ffmpeg
@@ -60,11 +61,12 @@ func locateSystemFFmpeg(candidates []string, stat func(string) error, gateReques
 // findSystemFFmpeg returns a full-featured ffmpeg for authoring test fixtures
 // — never the binary under test, findFFmpeg's job. Fixtures need libx264,
 // libx265, flac, srt and the matroska muxer — exactly what the bundled LGPL
-// build excludes — so this deliberately stays on Homebrew's ffmpeg regardless of
-// IINA_AIRPLAY_FFMPEG. When that variable is set, a gate run against the
-// bundled build was explicitly requested, so a missing system ffmpeg here is
-// a hard failure rather than a skip: skipping would let `go test` exit 0
-// without the bundled ffmpeg ever having been driven through the pipeline.
+// build excludes — so this prefers Homebrew's ffmpeg on macOS and /usr/bin on
+// Linux regardless of IINA_AIRPLAY_FFMPEG. When that variable is set, a gate
+// run against the bundled build was explicitly requested, so a missing system
+// ffmpeg here is a hard failure rather than a skip: skipping would let `go
+// test` exit 0 without the bundled ffmpeg ever having been driven through the
+// pipeline.
 func findSystemFFmpeg(t *testing.T) string {
 	t.Helper()
 	gateRequested := os.Getenv("IINA_AIRPLAY_FFMPEG") != ""
